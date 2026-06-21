@@ -1,0 +1,170 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  phone         String?
+  passwordHash  String
+  name          String?
+  age           Int?
+  backgrounds   String[]
+  formality     Int       @default(25)
+  humor         Int       @default(30)
+  directness    Int       @default(70)
+  energy        Int       @default(60)
+  detail        Int       @default(35)
+  needs         String[]
+  wakeTime      String?
+  commute       String[]
+  diet          String[]
+  sidekickName  String    @default("Sidekick")
+  stripeCustomerId String? @unique
+  onboarded     Boolean   @default(false)
+  timezone      String    @default("America/Chicago")
+  location      String?
+  homeAddress       String?
+  morningBriefing   Boolean   @default(false)
+  latitude      Float?
+  longitude     Float?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  conversations Conversation[]
+  contacts      Contact[]
+  wallet        Wallet?
+  tasks         Task[]
+  integrations  Integration[]
+  emailDrafts   EmailDraft[]
+}
+
+model Conversation {
+  id        String    @id @default(cuid())
+  userId    String
+  channel   String    @default("web")
+  title     String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages Message[]
+
+  @@index([userId])
+}
+
+model Message {
+  id             String   @id @default(cuid())
+  conversationId String
+  role           String
+  content        String
+  createdAt      DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+}
+
+model Contact {
+  id           String  @id @default(cuid())
+  userId       String
+  name         String
+  phone        String?
+  email        String?
+  relationship String?
+  notes        String?
+  createdAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Wallet {
+  id                    String   @id @default(cuid())
+  userId                String   @unique
+  balance               Float    @default(0)
+  defaultPaymentMethod  String?
+  cardLast4             String?
+  cardBrand             String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+}
+
+model Transaction {
+  id          String   @id @default(cuid())
+  walletId    String
+  amount      Float
+  type        String
+  description String
+  vendor      String?
+  createdAt   DateTime @default(now())
+
+  wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([walletId])
+}
+
+model Task {
+  id          String    @id @default(cuid())
+  userId      String
+  title       String
+  completed   Boolean   @default(false)
+  priority    String    @default("medium")
+  dueDate     DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model EmailDraft {
+  id            String   @id @default(cuid())
+  userId        String
+  gmailMessageId String
+  gmailDraftId  String?
+  subject       String
+  from          String
+  snippet       String
+  draftBody     String
+  status        String   @default("pending") // pending, approved, dismissed
+  notified      Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, gmailMessageId])
+  @@index([userId])
+}
+
+model Integration {
+  id                String   @id @default(cuid())
+  userId            String
+  provider          String
+  accessToken       String
+  refreshToken      String?
+  expiresAt         DateTime?
+  scope             String?
+  accountEmail      String?
+  browserContextId  String?
+  browserSessionId  String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, provider])
+  @@index([userId])
+}
