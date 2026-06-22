@@ -17,16 +17,22 @@ export default function MorningBriefing() {
   const [testResult, setTestResult] = useState<string | null>(null);
   const [phone, setPhone] = useState("");
   const [wakeTime, setWakeTime] = useState("07:00");
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   const fetchSettings = useCallback(async () => {
     try {
       const res = await fetch("/api/settings/morning-briefing");
+      if (!res.ok) {
+        setFetchError(`API returned ${res.status}`);
+        setLoading(false);
+        return;
+      }
       const data = await res.json();
       setSettings(data);
       setPhone(data.phone || "");
       setWakeTime(data.wakeTime || "07:00");
-    } catch {
-      // ignore
+    } catch (e) {
+      setFetchError(String(e));
     }
     setLoading(false);
   }, []);
@@ -103,6 +109,17 @@ export default function MorningBriefing() {
     return (
       <div className="flex items-center justify-center h-full">
         <div className="text-text-muted text-sm">Loading...</div>
+      </div>
+    );
+  }
+
+  if (fetchError) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-3 px-5">
+        <div className="text-red-500 text-sm text-center">{fetchError}</div>
+        <button onClick={() => { setLoading(true); setFetchError(null); fetchSettings(); }} className="text-sm font-semibold text-white bg-[#1a1a1a] px-4 py-2 rounded-xl">
+          Retry
+        </button>
       </div>
     );
   }
