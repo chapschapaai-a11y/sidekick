@@ -20,6 +20,43 @@ export async function generateDraftsForUser(userId: string) {
 
   if (newEmails.length === 0) return { generated: 0, drafts: [] };
 
+  const triageList = newEmails
+    .slice(0, 10)
+    .map((e, i) => `[${i}] From: ${e.from}\nSubject: ${e.subject}\nSnippet: ${e.snippet}`)
+    .join("\n\n");
+
+  const triageResponse = await anthropic.messages.create({
+    model: "claude-haiku-4-5-20251001",
+    max_tokens: 300,
+    messages: [
+      {
+        role: "user",
+        content: `Which of these emails actually need a human reply? Only include emails where someone is asking a question, making a request, starting a conversation, or expecting a response.
+
+Do NOT include: newsletters, marketing, receipts, order confirmations, shipping notifications, automated alerts, no-reply senders, calendar invites, social media notifications, subscription updates, or promotional emails.
+
+Return ONLY a JSON array of the index numbers that need replies, like [0, 2, 4]. If none need replies, return [].
+
+${triageList}`,
+      },
+    ],
+  });
+
+  let replyIndices: number[] = [];
+  try {
+    const triageText = triageResponse.content[0].type === "text" ? triageResponse.content[0].text : "[]";
+    const match = triageText.match(/\[[\d\s,]*\]/);
+    if (match) replyIndices = JSON.parse(match[0]);
+  } catch {
+    replyIndices = [];
+  }
+
+  const actionableEmails = replyIndices
+    .filter((i) => i >= 0 && i < newEmails.length)
+    .map((i) => newEmails[i]);
+
+  if (actionableEmails.length === 0) return { generated: 0, drafts: [] };
+
   const sentEmails = await fetchSentEmails(userId, 20);
 
   const voiceExamples = sentEmails
@@ -40,13 +77,12 @@ RULES:
 - Mirror their EXACT writing patterns. If they use lowercase, you use lowercase. If they're terse, be terse. If they use specific phrases or expressions, use those same patterns.
 - Do NOT include a subject line. Just the reply body.
 - Sign off exactly the way they sign off in their real emails. If they use "${firstName}", use that. If they use an initial, use that. If they don't sign off at all, don't add one.
-- Draft a reply for EVERY email — even automated ones, receipts, or notifications get a brief acknowledgment. The user can dismiss what they don't need.
-- Never respond with NO_REPLY_NEEDED.
+- Only draft replies for emails that genuinely need a response — someone asking a question, making a request, or starting a conversation.
 - This must read like ${firstName} actually wrote it. Not an AI. Not a template. Them.`;
 
   const drafts = [];
 
-  for (const email of newEmails.slice(0, 5)) {
+  for (const email of actionableEmails.slice(0, 5)) {
     try {
       const response = await anthropic.messages.create({
         model: "claude-sonnet-4-6",
