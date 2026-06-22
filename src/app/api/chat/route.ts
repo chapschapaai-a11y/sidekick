@@ -3,7 +3,9 @@ import Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "@/lib/db";
 import { getSessionUserId } from "@/lib/auth";
 import { fetchTodayEvents, fetchRecentEmails, CalendarEvent, GmailThread } from "@/lib/google";
-import { searchAmazonProduct, addAmazonToCart, searchDoorDashRestaurants, browseDoorDashMenu, addDoorDashToCart, searchRides, searchLyftRides } from "@/lib/browserbase";
+async function getBrowserbase() {
+  return await import("@/lib/browserbase");
+}
 
 const anthropic = new Anthropic();
 
@@ -181,6 +183,7 @@ async function handleToolCall(
   if (toolName === "search_product") {
     const { query } = toolInput as { query: string };
     try {
+      const { searchAmazonProduct } = await getBrowserbase();
       const results = await searchAmazonProduct(query);
       if (results.length === 0) {
         return JSON.stringify({ results: [], message: "No products found. Try a different search." });
@@ -199,8 +202,9 @@ async function handleToolCall(
   }
 
   if (toolName === "place_order") {
-    const { productUrl, productTitle } = toolInput as { productUrl: string; productTitle: string };
+    const { productUrl } = toolInput as { productUrl: string; productTitle: string };
     try {
+      const { addAmazonToCart } = await getBrowserbase();
       const result = await addAmazonToCart(productUrl);
       return JSON.stringify(result);
     } catch (e) {
@@ -254,6 +258,7 @@ async function handleToolCall(
   if (toolName === "search_restaurants") {
     const { query, location } = toolInput as { query: string; location: string };
     try {
+      const { searchDoorDashRestaurants } = await getBrowserbase();
       const results = await searchDoorDashRestaurants(query, location);
       if (results.length === 0) {
         return JSON.stringify({ results: [], message: "No restaurants found. Try a different search or cuisine." });
@@ -267,6 +272,7 @@ async function handleToolCall(
   if (toolName === "browse_menu") {
     const { restaurantUrl, location } = toolInput as { restaurantUrl: string; location?: string };
     try {
+      const { browseDoorDashMenu } = await getBrowserbase();
       const menu = await browseDoorDashMenu(restaurantUrl, location);
       if (menu.items.length === 0) {
         return JSON.stringify({ restaurantName: menu.restaurantName, items: [], message: "Couldn't load the menu. The restaurant might require a login or the page layout changed." });
@@ -278,8 +284,9 @@ async function handleToolCall(
   }
 
   if (toolName === "place_food_order") {
-    const { restaurantUrl, itemName, restaurantName } = toolInput as { restaurantUrl: string; itemName: string; restaurantName: string };
+    const { restaurantUrl, itemName } = toolInput as { restaurantUrl: string; itemName: string; restaurantName: string };
     try {
+      const { addDoorDashToCart } = await getBrowserbase();
       const result = await addDoorDashToCart(restaurantUrl, itemName);
       return JSON.stringify(result);
     } catch (e) {
@@ -290,6 +297,7 @@ async function handleToolCall(
   if (toolName === "search_rides") {
     const { pickup, dropoff } = toolInput as { pickup: string; dropoff: string };
     try {
+      const { searchRides, searchLyftRides } = await getBrowserbase();
       const [uberResults, lyftResults] = await Promise.allSettled([
         searchRides(pickup, dropoff),
         searchLyftRides(pickup, dropoff),
