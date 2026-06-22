@@ -15,7 +15,7 @@ export async function GET() {
 
   return Response.json({
     enabled: user.morningBriefing,
-    phone: user.phone,
+    phone: user.phone || "",
     wakeTime: user.wakeTime || "07:00",
     timezone: user.timezone,
   });
