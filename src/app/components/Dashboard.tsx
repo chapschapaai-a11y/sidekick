@@ -188,14 +188,14 @@ export default function Dashboard({ state, onNavigate }: Props) {
     <div className="flex flex-col h-full bg-bg-secondary">
       <div className="flex-1 overflow-y-auto px-5 pb-24">
         {/* Greeting */}
-        <div className="flex justify-between items-center pt-6 pb-5 animate-fade-up">
-          <div>
+        <div className="flex justify-between items-center pt-6 pb-5 animate-fade-up gap-3">
+          <div className="min-w-0 flex-1">
             <div className="text-[15px] text-text-secondary">{greeting}</div>
-            <div className="text-[28px] font-extrabold tracking-tight text-text-primary">
+            <div className="text-[28px] font-extrabold tracking-tight text-text-primary truncate">
               {name}
             </div>
           </div>
-          <div className="w-12 h-12 rounded-full bg-accent flex items-center justify-center text-white font-bold text-lg">
+          <div className="w-12 h-12 rounded-full bg-accent flex items-center justify-center text-white font-bold text-lg shrink-0">
             {initial}
           </div>
         </div>

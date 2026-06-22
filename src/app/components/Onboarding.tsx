@@ -145,19 +145,9 @@ export default function Onboarding({ state, onUpdate, onComplete }: Props) {
       />
     </StepWrapper>,
 
-    // 2: Contact info
-    <StepWrapper key="contact" title="How should your Sidekick reach you?" hint="We'll use this to send briefings, reminders, and handle things on your behalf." onNext={next} onBack={back} canNext={state.email.length > 3 && state.phone.length > 6}>
+    // 2: Phone number
+    <StepWrapper key="contact" title="What's your phone number?" hint="Your Sidekick uses this to text you briefings, reminders, and updates." onNext={next} onBack={back} canNext={state.phone.length > 6}>
       <div className="flex flex-col gap-5">
-        <div>
-          <div className="text-[13px] font-semibold text-accent-light mb-1.5">Email</div>
-          <input
-            type="email"
-            value={state.email}
-            onChange={(e) => onUpdate({ email: e.target.value })}
-            placeholder="you@email.com"
-            className="w-full border-b-2 border-[#e5e5e5] focus:border-accent bg-transparent px-0 py-3 text-lg text-text-primary placeholder:text-[#d1d1d6] outline-none transition-colors"
-          />
-        </div>
         <div>
           <div className="text-[13px] font-semibold text-accent-light mb-1.5">Phone number</div>
           <input
@@ -165,10 +155,11 @@ export default function Onboarding({ state, onUpdate, onComplete }: Props) {
             value={state.phone}
             onChange={(e) => onUpdate({ phone: e.target.value })}
             placeholder="(512) 555-1234"
+            autoFocus
             className="w-full border-b-2 border-[#e5e5e5] focus:border-accent bg-transparent px-0 py-3 text-lg text-text-primary placeholder:text-[#d1d1d6] outline-none transition-colors"
           />
         </div>
-        <Callout icon="🔒">Your info is encrypted and never shared. Your Sidekick uses it to text you, send briefings, and manage things that need your identity.</Callout>
+        <Callout icon="🔒">Your number is encrypted and never shared. Your Sidekick uses it to text you morning briefings and handle things on your behalf.</Callout>
       </div>
     </StepWrapper>,
 
@@ -222,6 +213,16 @@ export default function Onboarding({ state, onUpdate, onComplete }: Props) {
     // 6: Needs
     <StepWrapper key="needs" title="What do you need help with?" hint="Pick everything that applies. This tells your Sidekick what to focus on." onNext={next} onBack={back} canNext>
       <div className="flex flex-col gap-2.5">
+        <button
+          onClick={() => {
+            const allLabels = NEEDS.map((n) => n.label);
+            const allSelected = allLabels.every((l) => state.needs.includes(l));
+            onUpdate({ needs: allSelected ? [] : allLabels });
+          }}
+          className="text-sm font-semibold text-accent self-end mb-1 hover:opacity-70 transition-opacity"
+        >
+          {NEEDS.every((n) => state.needs.includes(n.label)) ? "Deselect all" : "Select all"}
+        </button>
         {NEEDS.map((n) => (
           <OptionCard
             key={n.label}
