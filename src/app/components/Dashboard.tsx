@@ -66,6 +66,7 @@ export default function Dashboard({ state, onNavigate, onLogout }: Props) {
   const [expandedDraft, setExpandedDraft] = useState<string | null>(null);
   const [newTask, setNewTask] = useState("");
   const [addingTask, setAddingTask] = useState(false);
+  const [scanPhase, setScanPhase] = useState(0);
 
   useEffect(() => {
     fetch("/api/dashboard")
@@ -158,6 +159,10 @@ export default function Dashboard({ state, onNavigate, onLogout }: Props) {
 
   const generateDrafts = useCallback(async () => {
     setGeneratingDrafts(true);
+    setScanPhase(0);
+    const phaseTimer = setInterval(() => {
+      setScanPhase((p) => (p < 3 ? p + 1 : p));
+    }, 2500);
     try {
       const res = await fetch("/api/drafts/generate", { method: "POST" });
       const result = await res.json();
@@ -165,7 +170,9 @@ export default function Dashboard({ state, onNavigate, onLogout }: Props) {
         setDrafts((prev) => [...result.drafts, ...prev]);
       }
     } catch {}
+    clearInterval(phaseTimer);
     setGeneratingDrafts(false);
+    setScanPhase(0);
   }, []);
 
   const handleDraft = useCallback(async (id: string, status: "approved" | "dismissed") => {
@@ -306,10 +313,47 @@ export default function Dashboard({ state, onNavigate, onLogout }: Props) {
                   disabled={generatingDrafts}
                   className="text-xs font-semibold text-white bg-accent rounded-lg px-3 py-1.5 disabled:opacity-50 transition-opacity"
                 >
-                  {generatingDrafts ? "Drafting..." : "Scan & Draft"}
+                  {generatingDrafts ? "Scanning..." : "Scan & Draft"}
                 </button>
               </div>
-              {drafts.length > 0 ? (
+              {generatingDrafts ? (
+                <div className="px-4 py-5">
+                  <div className="flex flex-col gap-3">
+                    {[
+                      "Reading your inbox...",
+                      "Filtering out noise...",
+                      "Finding emails that need replies...",
+                      "Drafting responses in your voice...",
+                    ].map((label, i) => (
+                      <div key={i} className="flex items-center gap-2.5">
+                        <div className="w-5 h-5 flex items-center justify-center shrink-0">
+                          {scanPhase > i ? (
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="animate-fade-up">
+                              <circle cx="8" cy="8" r="8" fill="#34C759" />
+                              <path d="M4.5 8L7 10.5L11.5 5.5" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                          ) : scanPhase === i ? (
+                            <div className="w-4 h-4 rounded-full border-2 border-accent border-t-transparent animate-spin" />
+                          ) : (
+                            <div className="w-4 h-4 rounded-full border-2 border-[#e0e0e0]" />
+                          )}
+                        </div>
+                        <span className={`text-sm transition-colors duration-300 ${
+                          scanPhase > i ? "text-text-muted" : scanPhase === i ? "text-text-primary font-medium" : "text-text-muted/50"
+                        }`}>
+                          {label}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-4 h-1 bg-[#f0f0f0] rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-accent rounded-full transition-all duration-700 ease-out"
+                      style={{ width: `${Math.min(((scanPhase + 1) / 4) * 100, 100)}%` }}
+                    />
+                  </div>
+                </div>
+              ) : drafts.length > 0 ? (
                 <div className="divide-y divide-[#f0ede8]">
                   {drafts.map((draft) => (
                     <div key={draft.id} className="px-4 py-3">
@@ -360,13 +404,9 @@ export default function Dashboard({ state, onNavigate, onLogout }: Props) {
                     </div>
                   ))}
                 </div>
-              ) : !generatingDrafts ? (
-                <div className="px-4 py-5 text-center text-text-muted text-sm">
-                  All caught up — no new emails to draft.
-                </div>
               ) : (
                 <div className="px-4 py-5 text-center text-text-muted text-sm">
-                  <span className="inline-block animate-pulse">Reading your emails and drafting replies...</span>
+                  All caught up — no new emails to draft.
                 </div>
               )}
             </div>
