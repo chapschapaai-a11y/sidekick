@@ -20,6 +20,9 @@ export default function Home() {
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
       if (params.get("connected") === "google") return "apps";
+      if (params.get("error")) {
+        alert(`Google connect error: ${params.get("error")} — ${params.get("detail") || "unknown"}`);
+      }
     }
     return "home";
   });

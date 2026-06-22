@@ -32,7 +32,8 @@ export async function GET(req: NextRequest) {
   const tokens = await tokenRes.json();
 
   if (!tokens.access_token) {
-    return Response.redirect(`${origin}/?error=google_token_failed`);
+    const detail = encodeURIComponent(tokens.error || "no_access_token");
+    return Response.redirect(`${origin}/?error=google_token_failed&detail=${detail}`);
   }
 
   const profileRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
