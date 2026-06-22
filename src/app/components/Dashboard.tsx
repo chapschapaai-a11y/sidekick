@@ -375,9 +375,9 @@ export default function Dashboard({ state, onNavigate, onLogout }: Props) {
 
         {/* Connect Google — handles both calendar and email */}
         {!data?.calendarConnected && (
-          <a
-            href="/api/integrations/google/connect"
-            className="block bg-white border border-border border-dashed rounded-2xl p-5 mb-4 shadow-[0_1px_3px_rgba(0,0,0,0.04)] animate-fade-up hover:border-accent/30 transition-colors"
+          <button
+            onClick={() => { window.location.href = "/api/integrations/google/connect"; }}
+            className="w-full text-left bg-white border border-border border-dashed rounded-2xl p-5 mb-4 shadow-[0_1px_3px_rgba(0,0,0,0.04)] animate-fade-up hover:border-accent/30 transition-colors cursor-pointer"
             style={{ animationDelay: "0.15s" }}
           >
             <div className="flex items-center gap-3">
@@ -394,7 +394,7 @@ export default function Dashboard({ state, onNavigate, onLogout }: Props) {
                 Connect
               </span>
             </div>
-          </a>
+          </button>
         )}
 
         {/* Action Items — persistent, from database */}
