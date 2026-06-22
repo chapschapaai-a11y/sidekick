@@ -16,7 +16,13 @@ type AuthUser = { id: string; email: string; name: string | null; onboarded: boo
 export default function Home() {
   const [authUser, setAuthUser] = useState<AuthUser | "loading">("loading");
   const [state, setState] = useState<SidekickState | null>(null);
-  const [tab, setTab] = useState<Tab>("home");
+  const [tab, setTab] = useState<Tab>(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("connected") === "google") return "apps";
+    }
+    return "home";
+  });
 
   useEffect(() => {
     fetch("/api/auth/me")

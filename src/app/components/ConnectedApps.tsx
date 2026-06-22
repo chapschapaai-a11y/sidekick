@@ -8,6 +8,17 @@ interface AppConnection {
   connectedAt?: string;
 }
 
+const OAUTH_APPS = [
+  {
+    id: "google",
+    name: "Google",
+    icon: "📧",
+    description: "Gmail & Calendar — read, send, and schedule",
+    color: "#4285F4",
+    connectUrl: "/api/integrations/google/connect",
+  },
+];
+
 const APPS = [
   {
     id: "ubereats",
@@ -45,19 +56,29 @@ const APPS = [
 
 export default function ConnectedApps() {
   const [connections, setConnections] = useState<Record<string, AppConnection>>({});
+  const [oauthConnections, setOauthConnections] = useState<Record<string, AppConnection>>({});
   const [loading, setLoading] = useState(true);
   const [connectingApp, setConnectingApp] = useState<string | null>(null);
   const [sessionUrl, setSessionUrl] = useState<string | null>(null);
 
   const fetchConnections = useCallback(async () => {
     try {
-      const res = await fetch("/api/connections");
-      const data = await res.json();
+      const [browserRes, oauthRes] = await Promise.all([
+        fetch("/api/connections"),
+        fetch("/api/integrations/status"),
+      ]);
+      const browserData = await browserRes.json();
+      const oauthData = await oauthRes.json();
       const map: Record<string, AppConnection> = {};
-      for (const c of data.connections || []) {
+      for (const c of browserData.connections || []) {
         map[c.provider] = { provider: c.provider, status: "connected", connectedAt: c.connectedAt };
       }
       setConnections(map);
+      const oauthMap: Record<string, AppConnection> = {};
+      for (const c of oauthData.connections || []) {
+        oauthMap[c.provider] = { provider: c.provider, status: "connected", connectedAt: c.connectedAt };
+      }
+      setOauthConnections(oauthMap);
     } catch {
       // ignore
     }
@@ -66,6 +87,10 @@ export default function ConnectedApps() {
 
   useEffect(() => {
     fetchConnections();
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("connected") === "google") {
+      window.history.replaceState({}, "", "/");
+    }
   }, [fetchConnections]);
 
   async function handleConnect(appId: string) {
@@ -171,6 +196,67 @@ export default function ConnectedApps() {
 
       <div className="flex-1 overflow-y-auto px-5 pb-6">
         <div className="flex flex-col gap-3 mt-2">
+          {OAUTH_APPS.map((app) => {
+            const conn = oauthConnections[app.id];
+            const isConnected = conn?.status === "connected";
+
+            return (
+              <div
+                key={app.id}
+                className="flex items-center gap-3 p-4 rounded-2xl border border-[#e8e8ea] bg-white"
+              >
+                <div
+                  className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl"
+                  style={{ backgroundColor: `${app.color}15` }}
+                >
+                  {app.icon}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-semibold text-text-primary text-[15px]">{app.name}</h3>
+                    {isConnected && (
+                      <span className="text-[10px] font-semibold text-success bg-success/10 px-1.5 py-0.5 rounded-full">
+                        Connected
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-text-muted mt-0.5">{app.description}</p>
+                </div>
+                {isConnected ? (
+                  <button
+                    onClick={async () => {
+                      await fetch("/api/integrations/status", {
+                        method: "DELETE",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ provider: app.id }),
+                      });
+                      setOauthConnections((prev) => {
+                        const next = { ...prev };
+                        delete next[app.id];
+                        return next;
+                      });
+                    }}
+                    className="text-xs font-medium text-red-500 px-3 py-1.5 rounded-lg border border-red-200 hover:bg-red-50 transition-colors"
+                  >
+                    Remove
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => {
+                      window.location.href = app.connectUrl;
+                    }}
+                    className="text-xs font-semibold text-white px-4 py-2 rounded-xl transition-colors"
+                    style={{ backgroundColor: app.color }}
+                  >
+                    Connect
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="flex flex-col gap-3 mt-3">
           {APPS.map((app) => {
             const conn = connections[app.id];
             const isConnected = conn?.status === "connected";
@@ -229,7 +315,7 @@ export default function ConnectedApps() {
           </div>
         )}
 
-        {!loading && Object.keys(connections).length === 0 && (
+        {!loading && Object.keys(connections).length === 0 && Object.keys(oauthConnections).length === 0 && (
           <div className="mt-8 text-center">
             <p className="text-4xl mb-3">🔗</p>
             <p className="text-sm text-text-muted">
