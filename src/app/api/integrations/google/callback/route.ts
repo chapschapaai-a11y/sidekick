@@ -9,8 +9,12 @@ export async function GET(req: NextRequest) {
   const code = req.nextUrl.searchParams.get("code");
   const userId = req.nextUrl.searchParams.get("state");
 
+  const origin = req.headers.get("x-forwarded-host")
+    ? `https://${req.headers.get("x-forwarded-host")}`
+    : new URL(req.url).origin;
+
   if (!code || !userId) {
-    return Response.redirect(new URL("/?error=google_auth_failed", req.url));
+    return Response.redirect(`${origin}/?error=google_auth_failed`);
   }
 
   const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
@@ -28,7 +32,7 @@ export async function GET(req: NextRequest) {
   const tokens = await tokenRes.json();
 
   if (!tokens.access_token) {
-    return Response.redirect(new URL("/?error=google_token_failed", req.url));
+    return Response.redirect(`${origin}/?error=google_token_failed`);
   }
 
   const profileRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
@@ -60,5 +64,5 @@ export async function GET(req: NextRequest) {
     },
   });
 
-  return Response.redirect(new URL("/?connected=google", req.url));
+  return Response.redirect(`${origin}/?connected=google`);
 }
