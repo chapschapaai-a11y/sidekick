@@ -114,7 +114,13 @@ export default function Home() {
   return (
     <div className="h-screen max-w-lg mx-auto flex flex-col relative bg-bg-secondary">
       <div className="flex-1 overflow-hidden">
-        {tab === "home" && <Dashboard state={state} onNavigate={setTab} />}
+        {tab === "home" && <Dashboard state={state} onNavigate={setTab} onLogout={async () => {
+          await fetch("/api/auth/logout", { method: "POST" });
+          localStorage.clear();
+          setAuthUser(null);
+          setState(null);
+          window.location.reload();
+        }} />}
         {tab === "chat" && <Chat state={state} />}
         {tab === "wallet" && <Wallet />}
         {tab === "apps" && <ConnectedApps />}

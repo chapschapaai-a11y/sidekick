@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback } from "react";
 interface Props {
   state: { name: string; sidekickName: string };
   onNavigate: (tab: "home" | "chat" | "wallet" | "apps" | "briefing") => void;
+  onLogout: () => void;
 }
 
 interface TaskItem {
@@ -56,7 +57,7 @@ interface DashboardData {
   emailConnected: boolean;
 }
 
-export default function Dashboard({ state, onNavigate }: Props) {
+export default function Dashboard({ state, onNavigate, onLogout }: Props) {
   const [data, setData] = useState<DashboardData | null>(null);
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
@@ -195,9 +196,13 @@ export default function Dashboard({ state, onNavigate }: Props) {
               {name}
             </div>
           </div>
-          <div className="w-12 h-12 rounded-full bg-accent flex items-center justify-center text-white font-bold text-lg shrink-0">
+          <button
+            onClick={onLogout}
+            title="Log out"
+            className="w-12 h-12 rounded-full bg-accent flex items-center justify-center text-white font-bold text-lg shrink-0 hover:opacity-80 transition-opacity"
+          >
             {initial}
-          </div>
+          </button>
         </div>
 
         {/* Weather — real data from Open-Meteo */}
