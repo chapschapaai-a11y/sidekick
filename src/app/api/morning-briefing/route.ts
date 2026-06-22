@@ -1,10 +1,6 @@
 import { getSessionUserId } from "@/lib/auth";
-import { generateAndSendBriefing } from "@/lib/morning-briefing";
 import { prisma } from "@/lib/db";
 import { fetchTodayEvents } from "@/lib/google";
-import Anthropic from "@anthropic-ai/sdk";
-
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 export async function GET() {
   const userId = await getSessionUserId();
@@ -45,6 +41,11 @@ export async function POST() {
   const userId = await getSessionUserId();
   if (!userId) return Response.json({ error: "Not authenticated" }, { status: 401 });
 
-  const result = await generateAndSendBriefing(userId);
-  return Response.json(result);
+  try {
+    const { generateAndSendBriefing } = await import("@/lib/morning-briefing");
+    const result = await generateAndSendBriefing(userId);
+    return Response.json(result);
+  } catch (e) {
+    return Response.json({ error: "Briefing service not configured yet", detail: String(e) });
+  }
 }
