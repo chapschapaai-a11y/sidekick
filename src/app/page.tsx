@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, Component, type ReactNode } from "react";
 import { SidekickState, loadState, saveState } from "@/lib/store";
 import AuthScreen from "./components/AuthScreen";
 import Onboarding from "./components/Onboarding";
@@ -9,6 +9,22 @@ import Chat from "./components/Chat";
 import Wallet from "./components/Wallet";
 import ConnectedApps from "./components/ConnectedApps";
 import MorningBriefing from "./components/MorningBriefing";
+
+class TabErrorBoundary extends Component<{ children: ReactNode; onError?: () => void }, { error: string | null }> {
+  state = { error: null as string | null };
+  static getDerivedStateFromError(e: Error) { return { error: e.message }; }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="flex flex-col items-center justify-center h-full gap-3 px-5">
+          <div className="text-red-500 text-sm text-center">{this.state.error}</div>
+          <button onClick={() => this.setState({ error: null })} className="text-sm font-semibold text-white bg-[#1a1a1a] px-4 py-2 rounded-xl">Retry</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 type Tab = "home" | "chat" | "wallet" | "apps" | "briefing";
 type AuthUser = { id: string; email: string; name: string | null; onboarded: boolean; sidekickName: string } | null;
@@ -20,9 +36,6 @@ export default function Home() {
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
       if (params.get("connected") === "google") return "apps";
-      if (params.get("error")) {
-        alert(`Google connect error: ${params.get("error")} — ${params.get("detail") || "unknown"}`);
-      }
     }
     return "home";
   });
@@ -123,17 +136,19 @@ export default function Home() {
   return (
     <div className="h-screen max-w-lg mx-auto flex flex-col relative bg-bg-secondary">
       <div className="flex-1 overflow-hidden">
-        {tab === "home" && <Dashboard state={state} onNavigate={setTab} onLogout={async () => {
-          await fetch("/api/auth/logout", { method: "POST" });
-          localStorage.clear();
-          setAuthUser(null);
-          setState(null);
-          window.location.reload();
-        }} />}
-        {tab === "chat" && <Chat state={state} />}
-        {tab === "wallet" && <Wallet />}
-        {tab === "apps" && <ConnectedApps />}
-        {tab === "briefing" && <MorningBriefing />}
+        <TabErrorBoundary>
+          {tab === "home" && <Dashboard state={state} onNavigate={setTab} onLogout={async () => {
+            await fetch("/api/auth/logout", { method: "POST" });
+            localStorage.clear();
+            setAuthUser(null);
+            setState(null);
+            window.location.reload();
+          }} />}
+          {tab === "chat" && <Chat state={state} />}
+          {tab === "wallet" && <Wallet />}
+          {tab === "apps" && <ConnectedApps />}
+          {tab === "briefing" && <MorningBriefing />}
+        </TabErrorBoundary>
       </div>
 
       <div className="flex border-t border-border bg-white">
