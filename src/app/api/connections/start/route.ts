@@ -2,6 +2,46 @@ import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { getSessionUserId } from "@/lib/auth";
 
+function navigateCDP(connectUrl: string, url: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(connectUrl);
+    const timeout = setTimeout(() => {
+      ws.close();
+      resolve(); // Don't fail the whole flow if navigation times out
+    }, 15000);
+
+    ws.addEventListener("open", () => {
+      ws.send(JSON.stringify({
+        id: 1,
+        method: "Page.navigate",
+        params: { url },
+      }));
+    });
+
+    ws.addEventListener("message", (event) => {
+      try {
+        const data = JSON.parse(String(event.data));
+        if (data.id === 1) {
+          // Navigation command acknowledged, wait a moment for page to start loading
+          setTimeout(() => {
+            clearTimeout(timeout);
+            ws.close();
+            resolve();
+          }, 2000);
+        }
+      } catch {
+        // ignore parse errors
+      }
+    });
+
+    ws.addEventListener("error", () => {
+      clearTimeout(timeout);
+      ws.close();
+      resolve(); // Don't fail the whole flow
+    });
+  });
+}
+
 const LOGIN_URLS: Record<string, string> = {
   ubereats: "https://auth.uber.com/v2/",
   doordash: "https://identity.doordash.com/auth/user/login",
@@ -70,13 +110,15 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    step = "navigating to login page";
+    await navigateCDP(session.connectUrl!, LOGIN_URLS[provider]);
+
     step = "getting debug URL";
     const liveUrls = await bb.sessions.debug(session.id);
 
     return Response.json({
       sessionId: session.id,
       contextId,
-      connectUrl: session.connectUrl,
       liveUrl: liveUrls.debuggerFullscreenUrl,
       loginUrl: LOGIN_URLS[provider],
     });
