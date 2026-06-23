@@ -124,7 +124,8 @@ export default function MorningBriefing() {
     );
   }
 
-  const formatTimeLabel = (time: string) => {
+  const formatTimeLabel = (time: string | null | undefined) => {
+    if (!time) return "7:00 AM";
     const [h, m] = time.split(":").map(Number);
     const ampm = h >= 12 ? "PM" : "AM";
     const hour = h % 12 || 12;
