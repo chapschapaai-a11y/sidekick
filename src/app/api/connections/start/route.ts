@@ -57,6 +57,12 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    const { chromium } = await import("playwright-core");
+    const browser = await chromium.connectOverCDP(session.connectUrl!);
+    const page = browser.contexts()[0].pages()[0];
+    await page.goto(LOGIN_URLS[provider], { waitUntil: "domcontentloaded", timeout: 30000 });
+    await browser.close();
+
     const liveUrls = await bb.sessions.debug(session.id);
 
     return Response.json({
