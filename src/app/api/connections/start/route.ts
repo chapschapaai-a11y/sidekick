@@ -6,10 +6,7 @@ import WS from "ws";
 function navigateCDP(connectUrl: string, url: string): Promise<void> {
   return new Promise((resolve) => {
     const ws = new WS(connectUrl);
-    const timeout = setTimeout(() => {
-      ws.close();
-      resolve();
-    }, 15000);
+    const timeout = setTimeout(() => resolve(), 10000);
 
     ws.on("open", () => {
       ws.send(JSON.stringify({
@@ -23,11 +20,10 @@ function navigateCDP(connectUrl: string, url: string): Promise<void> {
       try {
         const data = JSON.parse(String(raw));
         if (data.id === 1) {
-          setTimeout(() => {
-            clearTimeout(timeout);
-            ws.close();
-            resolve();
-          }, 2000);
+          clearTimeout(timeout);
+          // Don't close the WebSocket — let it die with the function.
+          // Closing it signals Browserbase the session is done.
+          resolve();
         }
       } catch {
         // ignore
@@ -36,7 +32,6 @@ function navigateCDP(connectUrl: string, url: string): Promise<void> {
 
     ws.on("error", () => {
       clearTimeout(timeout);
-      ws.close();
       resolve();
     });
   });
