@@ -40,8 +40,9 @@ model User {
   contacts      Contact[]
   wallet        Wallet?
   tasks         Task[]
-  integrations  Integration[]
-  emailDrafts   EmailDraft[]
+  integrations          Integration[]
+  emailDrafts           EmailDraft[]
+  calendarSubscriptions CalendarSubscription[]
 }
 
 model Conversation {
@@ -146,6 +147,21 @@ model EmailDraft {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, gmailMessageId])
+  @@index([userId])
+}
+
+model CalendarSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  url       String
+  provider  String   // icloud, google, outlook, yahoo, other
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, url])
   @@index([userId])
 }
 

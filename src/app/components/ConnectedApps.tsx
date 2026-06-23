@@ -1,6 +1,14 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import CalendarImportWizard from "./CalendarImportWizard";
+
+interface CalendarSub {
+  id: string;
+  name: string;
+  provider: string;
+  createdAt: string;
+}
 
 interface AppConnection {
   provider: string;
@@ -60,12 +68,15 @@ export default function ConnectedApps() {
   const [loading, setLoading] = useState(true);
   const [connectingApp, setConnectingApp] = useState<string | null>(null);
   const [sessionUrl, setSessionUrl] = useState<string | null>(null);
+  const [showCalendarWizard, setShowCalendarWizard] = useState(false);
+  const [calendarSubs, setCalendarSubs] = useState<CalendarSub[]>([]);
 
   const fetchConnections = useCallback(async () => {
     try {
-      const [browserRes, oauthRes] = await Promise.all([
+      const [browserRes, oauthRes, calRes] = await Promise.all([
         fetch("/api/connections"),
         fetch("/api/integrations/status"),
+        fetch("/api/calendar-subscriptions"),
       ]);
       const browserData = await browserRes.json();
       const oauthData = await oauthRes.json();
@@ -79,6 +90,8 @@ export default function ConnectedApps() {
         oauthMap[c.provider] = { provider: c.provider, status: "connected", connectedAt: c.connectedAt };
       }
       setOauthConnections(oauthMap);
+      const calData = await calRes.json();
+      if (calData.subscriptions) setCalendarSubs(calData.subscriptions);
     } catch {
       // ignore
     }
@@ -192,6 +205,18 @@ export default function ConnectedApps() {
     );
   }
 
+  if (showCalendarWizard) {
+    return (
+      <CalendarImportWizard
+        onComplete={() => {
+          setShowCalendarWizard(false);
+          fetchConnections();
+        }}
+        onClose={() => setShowCalendarWizard(false)}
+      />
+    );
+  }
+
   return (
     <div className="flex flex-col h-full bg-white">
       <div className="px-5 pt-6 pb-3">
@@ -263,7 +288,66 @@ export default function ConnectedApps() {
           })}
         </div>
 
-        <div className="flex flex-col gap-3 mt-3">
+        {/* Calendar Subscriptions */}
+        <div className="mt-5 mb-2">
+          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider px-1">Calendars</h3>
+        </div>
+
+        <div className="flex flex-col gap-3">
+          {calendarSubs.map((sub) => (
+            <div
+              key={sub.id}
+              className="flex items-center gap-3 p-4 rounded-2xl border border-[#e8e8ea] bg-white"
+            >
+              <div className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl bg-[#f0f0f0]">
+                📅
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <h3 className="font-semibold text-text-primary text-[15px]">{sub.name}</h3>
+                  <span className="text-[10px] font-semibold text-success bg-success/10 px-1.5 py-0.5 rounded-full">
+                    Synced
+                  </span>
+                </div>
+                <p className="text-xs text-text-muted mt-0.5 capitalize">{sub.provider} calendar</p>
+              </div>
+              <button
+                onClick={async () => {
+                  await fetch("/api/calendar-subscriptions", {
+                    method: "DELETE",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ id: sub.id }),
+                  });
+                  setCalendarSubs((prev) => prev.filter((s) => s.id !== sub.id));
+                }}
+                className="text-xs font-medium text-red-500 px-3 py-1.5 rounded-lg border border-red-200 hover:bg-red-50 transition-colors"
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+
+          <button
+            onClick={() => setShowCalendarWizard(true)}
+            className="flex items-center gap-3 p-4 rounded-2xl border-2 border-dashed border-[#d0d0d0] bg-[#fafafa] active:scale-[0.98] transition-transform"
+          >
+            <div className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl bg-white border border-[#e8e8ea]">
+              ➕
+            </div>
+            <div className="text-left">
+              <div className="font-semibold text-text-primary text-[15px]">Import a Calendar</div>
+              <p className="text-xs text-text-muted mt-0.5">iCloud, Google, Outlook, Yahoo, or any ICS feed</p>
+            </div>
+            <div className="ml-auto text-text-muted">→</div>
+          </button>
+        </div>
+
+        {/* Browser-based apps */}
+        <div className="mt-5 mb-2">
+          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider px-1">Services</h3>
+        </div>
+
+        <div className="flex flex-col gap-3">
           {APPS.map((app) => {
             const conn = connections[app.id];
             const isConnected = conn?.status === "connected";
