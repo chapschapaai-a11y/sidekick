@@ -93,8 +93,11 @@ export default function ConnectedApps() {
     }
   }, [fetchConnections]);
 
+  const [connectError, setConnectError] = useState<string | null>(null);
+
   async function handleConnect(appId: string) {
     setConnectingApp(appId);
+    setConnectError(null);
     try {
       const res = await fetch("/api/connections/start", {
         method: "POST",
@@ -104,8 +107,12 @@ export default function ConnectedApps() {
       const data = await res.json();
       if (data.liveUrl) {
         setSessionUrl(data.liveUrl);
+      } else {
+        setConnectError(data.error || "Couldn't start browser session");
+        setConnectingApp(null);
       }
     } catch {
+      setConnectError("Connection failed — check your internet");
       setConnectingApp(null);
     }
   }
@@ -304,6 +311,12 @@ export default function ConnectedApps() {
             );
           })}
         </div>
+
+        {connectError && (
+          <div className="mt-3 p-3 rounded-xl bg-red-50 text-red-700 text-sm text-center">
+            {connectError}
+          </div>
+        )}
 
         {!loading && Object.keys(connections).length > 0 && (
           <div className="mt-6 p-4 bg-bg-secondary rounded-2xl">
