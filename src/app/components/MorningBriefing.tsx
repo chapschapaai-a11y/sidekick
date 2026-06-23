@@ -124,12 +124,14 @@ export default function MorningBriefing() {
     );
   }
 
-  const formatTimeLabel = (time: string | null | undefined) => {
-    if (!time) return "7:00 AM";
-    const [h, m] = time.split(":").map(Number);
+  const formatTimeLabel = (time: unknown) => {
+    if (!time || typeof time !== "string" || !time.includes(":")) return "7:00 AM";
+    const parts = time.split(":");
+    const h = Number(parts[0]) || 0;
+    const m = Number(parts[1]) || 0;
     const ampm = h >= 12 ? "PM" : "AM";
     const hour = h % 12 || 12;
-    return `${hour}:${m.toString().padStart(2, "0")} ${ampm}`;
+    return `${hour}:${String(m).padStart(2, "0")} ${ampm}`;
   };
 
   return (
