@@ -1,16 +1,17 @@
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { getSessionUserId } from "@/lib/auth";
+import WS from "ws";
 
 function navigateCDP(connectUrl: string, url: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(connectUrl);
+  return new Promise((resolve) => {
+    const ws = new WS(connectUrl);
     const timeout = setTimeout(() => {
       ws.close();
-      resolve(); // Don't fail the whole flow if navigation times out
+      resolve();
     }, 15000);
 
-    ws.addEventListener("open", () => {
+    ws.on("open", () => {
       ws.send(JSON.stringify({
         id: 1,
         method: "Page.navigate",
@@ -18,11 +19,10 @@ function navigateCDP(connectUrl: string, url: string): Promise<void> {
       }));
     });
 
-    ws.addEventListener("message", (event) => {
+    ws.on("message", (raw) => {
       try {
-        const data = JSON.parse(String(event.data));
+        const data = JSON.parse(String(raw));
         if (data.id === 1) {
-          // Navigation command acknowledged, wait a moment for page to start loading
           setTimeout(() => {
             clearTimeout(timeout);
             ws.close();
@@ -30,14 +30,14 @@ function navigateCDP(connectUrl: string, url: string): Promise<void> {
           }, 2000);
         }
       } catch {
-        // ignore parse errors
+        // ignore
       }
     });
 
-    ws.addEventListener("error", () => {
+    ws.on("error", () => {
       clearTimeout(timeout);
       ws.close();
-      resolve(); // Don't fail the whole flow
+      resolve();
     });
   });
 }
