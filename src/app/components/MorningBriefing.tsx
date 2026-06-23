@@ -28,9 +28,15 @@ export default function MorningBriefing() {
         return;
       }
       const data = await res.json();
-      setSettings(data);
-      setPhone(data.phone || "");
-      setWakeTime(data.wakeTime || "07:00");
+      const safeSettings: BriefingSettings = {
+        enabled: data.enabled === true,
+        phone: typeof data.phone === "string" ? data.phone : "",
+        wakeTime: typeof data.wakeTime === "string" && data.wakeTime ? data.wakeTime : "07:00",
+        timezone: typeof data.timezone === "string" ? data.timezone : "",
+      };
+      setSettings(safeSettings);
+      setPhone(safeSettings.phone);
+      setWakeTime(safeSettings.wakeTime);
     } catch (e) {
       setFetchError(String(e));
     }
@@ -174,7 +180,7 @@ export default function MorningBriefing() {
           </label>
           <input
             type="tel"
-            value={phone}
+            value={phone ?? ""}
             onChange={(e) => setPhone(e.target.value)}
             placeholder="+1 (555) 555-5555"
             className="w-full px-3 py-2.5 rounded-xl border border-[#e0e0e0] text-sm text-text-primary placeholder:text-text-muted/50 focus:outline-none focus:border-[#1a1a1a] transition-colors"
@@ -191,8 +197,8 @@ export default function MorningBriefing() {
           </label>
           <input
             type="time"
-            value={wakeTime}
-            onChange={(e) => setWakeTime(e.target.value)}
+            value={wakeTime ?? "07:00"}
+            onChange={(e) => setWakeTime(e.target.value || "07:00")}
             className="w-full px-3 py-2.5 rounded-xl border border-[#e0e0e0] text-sm text-text-primary focus:outline-none focus:border-[#1a1a1a] transition-colors"
           />
           <p className="text-[11px] text-text-muted mt-1.5">
