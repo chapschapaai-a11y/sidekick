@@ -108,7 +108,7 @@ export default function ConnectedApps() {
       if (data.liveUrl) {
         setSessionUrl(data.liveUrl);
       } else {
-        setConnectError(data.error || "Couldn't start browser session");
+        setConnectError(data.detail || data.error || "Couldn't start browser session");
         setConnectingApp(null);
       }
     } catch {
