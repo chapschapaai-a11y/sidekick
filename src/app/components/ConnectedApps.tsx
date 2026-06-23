@@ -68,6 +68,7 @@ export default function ConnectedApps() {
   const [loading, setLoading] = useState(true);
   const [connectingApp, setConnectingApp] = useState<string | null>(null);
   const [sessionUrl, setSessionUrl] = useState<string | null>(null);
+  const [loginUrl, setLoginUrl] = useState<string | null>(null);
   const [showCalendarWizard, setShowCalendarWizard] = useState(false);
   const [calendarSubs, setCalendarSubs] = useState<CalendarSub[]>([]);
 
@@ -120,6 +121,7 @@ export default function ConnectedApps() {
       const data = await res.json();
       if (data.liveUrl) {
         setSessionUrl(data.liveUrl);
+        setLoginUrl(data.loginUrl || null);
       } else {
         setConnectError(data.detail || data.error || "Couldn't start browser session");
         setConnectingApp(null);
@@ -172,7 +174,7 @@ export default function ConnectedApps() {
       <div className="flex flex-col h-full bg-white">
         <div className="flex items-center gap-3 px-5 py-3 border-b border-[#f0f0f0]">
           <button
-            onClick={() => { setConnectingApp(null); setSessionUrl(null); }}
+            onClick={() => { setConnectingApp(null); setSessionUrl(null); setLoginUrl(null); }}
             className="text-text-muted text-sm"
           >
             ← Back
@@ -181,6 +183,23 @@ export default function ConnectedApps() {
             Log in to {app?.name}
           </h3>
         </div>
+
+        {loginUrl && (
+          <div className="px-5 py-3 bg-[#f8f8f8] border-b border-[#f0f0f0]">
+            <p className="text-xs text-text-muted mb-1.5">Navigate to this URL in the browser below:</p>
+            <div className="flex items-center gap-2">
+              <code className="text-xs bg-white px-2 py-1.5 rounded-lg border border-[#e0e0e0] text-text-primary flex-1 truncate font-mono">
+                {loginUrl}
+              </code>
+              <button
+                onClick={() => navigator.clipboard.writeText(loginUrl)}
+                className="text-xs font-semibold text-white bg-[#1a1a1a] px-3 py-1.5 rounded-lg shrink-0"
+              >
+                Copy
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="flex-1 flex flex-col">
           <iframe
