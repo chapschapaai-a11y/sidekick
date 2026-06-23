@@ -271,29 +271,37 @@ export default function Dashboard({ state, onNavigate, onLogout }: Props) {
         </div>
 
         {/* Today's Schedule — shown when Google Calendar is connected */}
-        {data?.calendarConnected && calendarEvents.length > 0 && (
+        {data?.calendarConnected && (
           <Section title="📅 Today's Schedule" delay="0.15s">
-            <div className="bg-white rounded-2xl shadow-[0_1px_3px_rgba(0,0,0,0.04)] divide-y divide-[#f0ede8]">
-              {calendarEvents.map((event) => {
-                const startTime = event.allDay
-                  ? "All day"
-                  : new Date(event.start).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-                const endTime = event.allDay
-                  ? ""
-                  : new Date(event.end).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-                return (
-                  <div key={event.id} className="flex items-center gap-3 px-4 py-3">
-                    <div className="w-1 h-8 rounded-full bg-lime shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-semibold text-text-primary truncate">{event.title}</div>
-                      <div className="text-xs text-text-muted">
-                        {startTime}{endTime ? `–${endTime}` : ""}
-                        {event.location && ` · ${event.location}`}
+            <div className="bg-white rounded-2xl shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
+              {calendarEvents.length > 0 ? (
+                <div className="divide-y divide-[#f0ede8]">
+                  {calendarEvents.map((event) => {
+                    const startTime = event.allDay
+                      ? "All day"
+                      : new Date(event.start).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+                    const endTime = event.allDay
+                      ? ""
+                      : new Date(event.end).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+                    return (
+                      <div key={event.id} className="flex items-center gap-3 px-4 py-3">
+                        <div className="w-1 h-8 rounded-full bg-lime shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-semibold text-text-primary truncate">{event.title}</div>
+                          <div className="text-xs text-text-muted">
+                            {startTime}{endTime ? `–${endTime}` : ""}
+                            {event.location && ` · ${event.location}`}
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  </div>
-                );
-              })}
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="px-4 py-5 text-center">
+                  <p className="text-sm text-text-muted">Nothing on the calendar today — enjoy the free time ✨</p>
+                </div>
+              )}
             </div>
           </Section>
         )}

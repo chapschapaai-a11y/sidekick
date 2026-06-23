@@ -12,8 +12,8 @@ const OAUTH_APPS = [
   {
     id: "google",
     name: "Google",
-    icon: "📧",
-    description: "Gmail & Calendar — read, send, and schedule",
+    icon: "🔗",
+    description: "Gmail & Google Calendar — email, drafts, and your schedule",
     color: "#4285F4",
     connectUrl: "/api/integrations/google/connect",
   },
