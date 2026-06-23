@@ -483,6 +483,7 @@ interface WeatherInfo {
   low: number;
   uvIndex: number;
   condition: string;
+  forecast: { day: string; high: number; low: number; condition: string; rainChance: number }[];
 }
 
 async function fetchWeather(
@@ -508,21 +509,34 @@ async function fetchWeather(
   }
 
   const res = await fetch(
-    `${WEATHER_URL}?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,apparent_temperature,weather_code,uv_index&daily=temperature_2m_max,temperature_2m_min&temperature_unit=fahrenheit&timezone=auto&forecast_days=1`
+    `${WEATHER_URL}?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,apparent_temperature,weather_code,uv_index&daily=temperature_2m_max,temperature_2m_min,weather_code,precipitation_probability_max&temperature_unit=fahrenheit&timezone=auto&forecast_days=7`
   );
   const data = await res.json();
   const c = data.current;
   const d = data.daily;
 
-  const code = c.weather_code;
-  const condition =
-    code === 0 ? "clear" :
-    code <= 3 ? "partly cloudy" :
-    code <= 48 ? "foggy" :
-    code <= 67 ? "rainy" :
-    code <= 77 ? "snowy" :
-    code <= 82 ? "rain showers" :
-    code <= 99 ? "thunderstorms" : "unknown";
+  function weatherLabel(code: number) {
+    return code === 0 ? "clear" :
+      code <= 3 ? "partly cloudy" :
+      code <= 48 ? "foggy" :
+      code <= 67 ? "rainy" :
+      code <= 77 ? "snowy" :
+      code <= 82 ? "rain showers" :
+      code <= 99 ? "thunderstorms" : "unknown";
+  }
+
+  const forecast: { day: string; high: number; low: number; condition: string; rainChance: number }[] = [];
+  const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  for (let i = 0; i < Math.min(d.time.length, 7); i++) {
+    const date = new Date(d.time[i] + "T12:00:00");
+    forecast.push({
+      day: i === 0 ? "Today" : i === 1 ? "Tomorrow" : dayNames[date.getDay()],
+      high: Math.round(d.temperature_2m_max[i]),
+      low: Math.round(d.temperature_2m_min[i]),
+      condition: weatherLabel(d.weather_code[i]),
+      rainChance: d.precipitation_probability_max?.[i] ?? 0,
+    });
+  }
 
   return {
     location: label,
@@ -531,7 +545,8 @@ async function fetchWeather(
     high: Math.round(d.temperature_2m_max[0]),
     low: Math.round(d.temperature_2m_min[0]),
     uvIndex: Math.round(c.uv_index),
-    condition,
+    condition: weatherLabel(c.weather_code),
+    forecast,
   };
 }
 
@@ -609,14 +624,15 @@ function buildSystemPrompt(
   if (user.needs.length > 0) contextParts.push(`Priorities: ${user.needs.join(", ")}`);
   if (user.wakeTime) contextParts.push(`Wake time: ${user.wakeTime}`);
 
-  return `You are ${user.sidekickName || "Sidekick"}, a personal AI assistant for ${name}. You're proactive, warm, and action-oriented — like a real human chief of staff who knows everything about their life.
+  return `You are ${user.sidekickName || "Sidekick"}, a personal AI assistant for ${name}. You're proactive, warm, and action-oriented — like a real human best friend who also happens to be incredibly smart and organized. You know about the world, current events, science, history, pop culture, cooking, fitness, relationships — everything. You're not just a task bot. You're someone ${name} can talk to about literally anything.
 
-PERSONALITY: ${toneNotes.length > 0 ? toneNotes.join(". ") + "." : "Casual but competent."} You talk like a trusted friend who happens to be incredibly organized. Never robotic. Use ${name}'s name naturally. No corporate speak.
+PERSONALITY: ${toneNotes.length > 0 ? toneNotes.join(". ") + "." : "Casual but competent."} You talk like a trusted friend who happens to know everything. Never robotic. Use ${name}'s name naturally. No corporate speak. If ${name} asks you a question — weather, trivia, advice, recommendations, how to cook something, what to wear, relationship advice, workout ideas, literally anything — just answer it naturally like a friend would. You have all the knowledge in the world. Use it.
 
 ABOUT ${name.toUpperCase()}:
 ${contextParts.length > 0 ? contextParts.join("\n") : "No profile details yet."}
 ${weather ? `\nWEATHER RIGHT NOW (${weather.location}):
-${weather.temperature}°F, ${weather.condition}. High ${weather.high}°, low ${weather.low}°. Feels like ${weather.feelsLike}°.${weather.uvIndex >= 6 ? ` UV index is high (${weather.uvIndex}) — recommend sunscreen.` : ""}` : ""}
+${weather.temperature}°F, ${weather.condition}. High ${weather.high}°, low ${weather.low}°. Feels like ${weather.feelsLike}°.${weather.uvIndex >= 6 ? ` UV index is high (${weather.uvIndex}) — recommend sunscreen.` : ""}
+${weather.forecast.length > 1 ? `\nFORECAST:\n${weather.forecast.map((f) => `- ${f.day}: ${f.condition}, high ${f.high}°, low ${f.low}°${f.rainChance > 20 ? ` (${f.rainChance}% rain)` : ""}`).join("\n")}` : ""}` : ""}
 ${calendarEvents.length > 0 ? `\nTODAY'S SCHEDULE:\n${calendarEvents.map((e) => {
     if (e.allDay) return `- ${e.title} (all day)${e.location ? ` @ ${e.location}` : ""}`;
     const startTime = new Date(e.start).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
@@ -669,10 +685,12 @@ ${user.homeAddress ? `${name}'s home address is **${user.homeAddress}**. When th
 
 RULES:
 - Always be proactive — suggest the next step
-- Keep responses SHORT — 2-4 sentences unless showing a list
+- Keep responses SHORT — 2-4 sentences unless showing a list or explaining something ${name} asked about
 - Reference ${name}'s life context naturally (location, diet, commute preferences)
-- It's currently ${timeOfDay}
+- Today is ${new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}. It's currently ${timeOfDay}.
 - Don't say "I can't" or "as an AI" — you ARE their assistant
+- If asked about weather, use the forecast data above — you already have it, don't say you can't check
+- If asked general knowledge questions (history, science, cooking, advice, recommendations, etc.), just answer — you're smart, use your knowledge
 - Format with markdown: **bold**, line breaks, etc.
 - Use lowercase for a casual feel unless the user's formality is high
 - NEVER spend wallet money without explicit confirmation from ${name}`;
