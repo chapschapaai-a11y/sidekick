@@ -37,7 +37,7 @@ export default function Home() {
       const params = new URLSearchParams(window.location.search);
       if (params.get("connected") === "google") return "apps";
     }
-    return "home";
+    return "chat";
   });
 
   useEffect(() => {
@@ -152,8 +152,8 @@ export default function Home() {
       </div>
 
       <div className="flex border-t border-border bg-white">
-        <TabButton icon="🏠" label="home" active={tab === "home"} onClick={() => setTab("home")} />
         <TabButton icon="💬" label="chat" active={tab === "chat"} onClick={() => setTab("chat")} />
+        <TabButton icon="🏠" label="home" active={tab === "home"} onClick={() => setTab("home")} />
         <TabButton icon="💳" label="wallet" active={tab === "wallet"} onClick={() => setTab("wallet")} />
         <TabButton icon="🔗" label="apps" active={tab === "apps"} onClick={() => setTab("apps")} />
         <TabButton icon="☀️" label="briefing" active={tab === "briefing"} onClick={() => setTab("briefing")} />
