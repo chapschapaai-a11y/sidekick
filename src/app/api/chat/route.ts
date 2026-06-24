@@ -325,52 +325,95 @@ async function handleToolCall(
   if (toolName === "search_restaurants") {
     const { query, location } = toolInput as { query: string; location: string };
     try {
-      const { browseWebsite } = await getBrowserbase();
-      const searchUrl = `https://www.doordash.com/search/store/${encodeURIComponent(query)}/?pickup=false`;
-      const result = await browseWebsite(
-        searchUrl,
-        `Search DoorDash for "${query}" restaurants that deliver to "${location}". ` +
-        `If the page asks for a delivery address, enter "${location}" and select the best autocomplete suggestion. ` +
-        `Then find restaurant results on the page. For each restaurant, note: the restaurant name, any rating, delivery fee, delivery time, and the DoorDash URL (href containing /store/). ` +
-        `Return "done" with a summary listing each restaurant in this exact format:\n` +
-        `RESTAURANT: [name] | RATING: [X.X] | FEE: [$X.XX delivery] | TIME: [XX-XX min] | URL: [full doordash URL]\n` +
-        `List up to 5 restaurants. If no results found, say "No restaurants found for this search."`
-      );
+      const { createBrowserSession } = await getBrowserbase();
+      const { browser, page } = await createBrowserSession();
 
-      if (!result.success || !result.summary) {
-        return JSON.stringify({ results: [], message: "No restaurants found on DoorDash. Try a different search." });
-      }
+      try {
+        const googleUrl = `https://www.google.com/search?q=${encodeURIComponent(`${query} delivery near ${location} site:doordash.com`)}`;
+        await page.goto(googleUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
+        await page.waitForTimeout(2000);
 
-      const lines = result.summary.split("\n").filter((l: string) => l.includes("RESTAURANT:") || l.includes("URL:"));
-      const results: Array<{name: string; url: string; rating?: string; deliveryFee?: string; deliveryTime?: string}> = [];
+        const results: Array<{name: string; url: string; rating?: string; deliveryFee?: string; deliveryTime?: string}> = [];
+        const seen = new Set<string>();
 
-      const restaurantBlocks = result.summary.split(/RESTAURANT:/i).filter((b: string) => b.trim());
-      for (const block of restaurantBlocks) {
-        const nameMatch = block.match(/^\s*(.+?)(?:\s*\||\s*RATING)/);
-        const ratingMatch = block.match(/RATING:\s*(\d\.\d)/i);
-        const feeMatch = block.match(/FEE:\s*(\$[\d.]+)/i);
-        const timeMatch = block.match(/TIME:\s*([\d]+-[\d]+\s*min)/i);
-        const urlMatch = block.match(/URL:\s*(https?:\/\/[^\s|]+)/i);
+        const googleLinks = page.locator('a[href*="doordash.com/store/"]');
+        const gCount = Math.min(await googleLinks.count(), 8);
 
-        if (nameMatch) {
-          results.push({
-            name: nameMatch[1].trim(),
-            url: urlMatch ? urlMatch[1].trim() : `https://www.doordash.com/search/store/${encodeURIComponent(query)}/`,
-            rating: ratingMatch ? ratingMatch[1] : undefined,
-            deliveryFee: feeMatch ? feeMatch[1] : undefined,
-            deliveryTime: timeMatch ? timeMatch[1] : undefined,
+        for (let i = 0; i < gCount && results.length < 5; i++) {
+          try {
+            const link = googleLinks.nth(i);
+            const href = await link.getAttribute("href") || "";
+            if (!href.includes("/store/") || seen.has(href)) continue;
+            seen.add(href);
+
+            const text = await link.textContent({ timeout: 2000 }).catch(() => "");
+            if (!text) continue;
+
+            const cleanName = text.split(" - ")[0].split(" | ")[0].split(" — ")[0].trim();
+            if (cleanName.length < 3 || cleanName.length > 80) continue;
+
+            const parent = link.locator("xpath=ancestor::div[1]");
+            const parentText = await parent.textContent({ timeout: 2000 }).catch(() => "");
+
+            let rating: string | undefined;
+            const ratingMatch = parentText?.match(/(\d\.\d)\s*(?:star|rating|\()/i);
+            if (ratingMatch) rating = ratingMatch[1];
+
+            let deliveryTime: string | undefined;
+            const timeMatch = parentText?.match(/(\d+[-–]\d+)\s*min/i);
+            if (timeMatch) deliveryTime = `${timeMatch[1]} min`;
+
+            let deliveryFee: string | undefined;
+            const feeMatch = parentText?.match(/\$(\d+\.?\d*)\s*delivery/i);
+            if (feeMatch) deliveryFee = `$${feeMatch[1]}`;
+
+            const url = href.startsWith("http") ? href : `https://www.doordash.com${href}`;
+            results.push({ name: cleanName, url, rating, deliveryFee, deliveryTime });
+          } catch {
+            continue;
+          }
+        }
+
+        if (results.length === 0) {
+          const altUrl = `https://www.google.com/search?q=${encodeURIComponent(`${query} restaurant delivery ${location} doordash`)}`;
+          await page.goto(altUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
+          await page.waitForTimeout(2000);
+
+          const altLinks = page.locator('a[href*="doordash.com"]');
+          const altCount = Math.min(await altLinks.count(), 5);
+          for (let i = 0; i < altCount && results.length < 3; i++) {
+            try {
+              const link = altLinks.nth(i);
+              const href = await link.getAttribute("href") || "";
+              if (seen.has(href) || !href.includes("doordash.com")) continue;
+              seen.add(href);
+              const text = await link.textContent({ timeout: 2000 }).catch(() => "");
+              const cleanName = (text || "").split(" - ")[0].split(" | ")[0].trim();
+              if (cleanName.length >= 3 && cleanName.length <= 80) {
+                results.push({ name: cleanName, url: href });
+              }
+            } catch { continue; }
+          }
+        }
+
+        await browser.close();
+
+        if (results.length === 0) {
+          return JSON.stringify({
+            results: [],
+            searchUrl: `https://www.doordash.com/search/store/${encodeURIComponent(query)}/`,
+            message: `No DoorDash results found via search. Direct link: https://www.doordash.com/search/store/${encodeURIComponent(query)}/`
           });
         }
-      }
-
-      if (results.length === 0) {
+        return JSON.stringify({ results });
+      } catch {
+        await browser.close().catch(() => {});
         return JSON.stringify({
           results: [],
-          rawSummary: result.summary,
-          message: "DoorDash search completed but couldn't parse restaurant results. Here's what was found: " + result.summary
+          searchUrl: `https://www.doordash.com/search/store/${encodeURIComponent(query)}/`,
+          message: `Search timed out. Direct DoorDash link: https://www.doordash.com/search/store/${encodeURIComponent(query)}/`
         });
       }
-      return JSON.stringify({ results });
     } catch (e) {
       return JSON.stringify({ error: "Restaurant search failed. Try again in a moment.", detail: String(e) });
     }
