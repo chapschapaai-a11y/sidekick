@@ -224,7 +224,7 @@ const SIDEKICK_TOOLS: Anthropic.Tool[] = [
   {
     name: "make_reservation",
     description:
-      "Look up a restaurant and check availability. Returns restaurant info, platform (OpenTable/Resy), and reservation URL. Call this FIRST to get restaurant details before booking.",
+      "Step 1 of 2: Look up a restaurant and prepare reservation data. Returns restaurant info and an internal reservationUrl. IMPORTANT: The reservationUrl is for complete_reservation only — NEVER show it to the user as a link. After this returns, ask the user about seating preference, then call complete_reservation (step 2) to actually book.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -704,6 +704,7 @@ async function handleToolCall(
         time: timeFormatted,
         partySize,
         reservationUrl,
+        _nextStep: "Ask user about seating preference (inside/outside/bar/no preference), then call complete_reservation with the reservationUrl above. Do NOT show the reservationUrl to the user as a link.",
       });
     }
 
@@ -1176,27 +1177,21 @@ CRITICAL RULES for food orders:
 
 RESTAURANT RESERVATIONS — you book the table, ${name} just shows up:
 When ${name} asks to make a reservation, get a table, book a spot, or anything involving dining out at a sit-down restaurant:
-1. ALWAYS call make_reservation first. Do NOT try to answer from memory or suggest calling the restaurant. Today is ${new Date().toISOString().split("T")[0]}. Convert relative dates ("tomorrow" = the next day, "this Friday" = the upcoming Friday) to YYYY-MM-DD. Convert times to 24-hour (7pm → 19:00). Default to party of 2 if not specified.
-2. After make_reservation returns, confirm the details and ask about seating preference:
+1. ALWAYS call make_reservation first. Today is ${new Date().toISOString().split("T")[0]}. Convert relative dates ("tomorrow" = next day, "this Friday" = upcoming Friday) to YYYY-MM-DD. Convert times to 24-hour (7pm → 19:00). Default party of 2.
+2. After make_reservation returns, confirm details and ask seating preference. DO NOT show the reservationUrl as a link. Example:
    "booking **Ledger** for **2** tomorrow at **7pm** — do you have a seating preference? inside, outside, bar?"
-3. Once ${name} confirms (or says they don't care), call complete_reservation with:
-   - reservationUrl from make_reservation
-   - restaurantName, date, time, partySize
-   - seatingPreference (if they specified one)
-   Tell them: "on it, booking now — give me about 30 seconds..."
-4. When complete_reservation succeeds, confirm:
-   "you're all set! **Ledger**, Thursday June 25 at 7:00 PM, party of 2. just show up and enjoy."
-5. If complete_reservation fails, present the fallback link:
-   "couldn't finish the booking automatically — [tap here to complete it](fallbackUrl)"
+3. Once ${name} confirms or specifies a preference, you MUST call complete_reservation. Pass it the reservationUrl from make_reservation. Say "on it, booking now — give me about 30 seconds..."
+4. On success: "you're all set! **Ledger**, Thursday June 25 at 7:00 PM, party of 2. just show up and enjoy."
+5. On failure: "couldn't finish the booking automatically — [tap here to complete it](fallbackUrl)"
 
-CRITICAL RULES for reservations:
-- ALWAYS use the tools. Never suggest calling the restaurant or going to a website yourself.
-- NEVER say "I can't make reservations" or anything suggesting failure unless the tool actually failed.
-- Ask about seating preference ONCE before booking. If they say "I don't care" or similar, proceed with no preference.
-- If they don't specify party size, assume 2. If they don't specify a time, ask for one.
-- complete_reservation takes 30-60 seconds (browser automation). Tell ${name} you're working on it so they know to wait.
-- If a credit card is needed, the virtual card from their wallet is used automatically.
-- The goal is: ${name} says what they want → you handle everything → they just show up.
+ABSOLUTE RULES — NEVER BREAK THESE:
+- NEVER present a link or URL to the user for reservations. You book it FOR them using complete_reservation.
+- NEVER say "tap here", "click here", "here's your link", or "book your table" with a URL. That defeats the entire purpose.
+- NEVER skip complete_reservation. When the user says "go ahead", "book it", "inside please", or confirms in any way, you MUST call complete_reservation.
+- The reservationUrl from make_reservation is INTERNAL — it goes to complete_reservation, not to the user.
+- complete_reservation takes 30-60 seconds (browser automation). Warn them to wait.
+- The virtual card from their wallet is used automatically if needed.
+- The goal: ${name} says what they want → you handle EVERYTHING → they just show up.
 
 RIDESHARE FLOW — you can find and pay for rides for ${name}:
 When ${name} asks for a ride, car, or needs to get somewhere:
