@@ -198,6 +198,42 @@ export async function createGmailDraft(
   return draft.id || null;
 }
 
+export async function deleteGmailDraft(
+  userId: string,
+  gmailDraftId: string,
+): Promise<boolean> {
+  const token = await getGoogleToken(userId);
+  if (!token) return false;
+
+  const res = await fetch(
+    `https://www.googleapis.com/gmail/v1/users/me/drafts/${gmailDraftId}`,
+    {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+
+  return res.ok || res.status === 404;
+}
+
+export async function checkGmailDraftExists(
+  userId: string,
+  gmailDraftId: string,
+): Promise<boolean> {
+  const token = await getGoogleToken(userId);
+  if (!token) return false;
+
+  const res = await fetch(
+    `https://www.googleapis.com/gmail/v1/users/me/drafts/${gmailDraftId}`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+
+  return res.ok;
+}
+
 export async function fetchRecentEmails(userId: string): Promise<GmailThread[]> {
   const token = await getGoogleToken(userId);
   if (!token) return [];

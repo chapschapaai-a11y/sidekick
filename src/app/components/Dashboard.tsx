@@ -184,6 +184,15 @@ export default function Dashboard({ state, onNavigate, onLogout }: Props) {
     });
   }, []);
 
+  const handleDeleteDraft = useCallback(async (id: string) => {
+    setDrafts((prev) => prev.filter((d) => d.id !== id));
+    await fetch("/api/drafts", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+  }, []);
+
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning," : hour < 17 ? "Good afternoon," : "Good evening,";
   const name = data?.name || state.name || "there";
@@ -404,7 +413,13 @@ export default function Dashboard({ state, onNavigate, onLogout }: Props) {
                               onClick={() => handleDraft(draft.id, "dismissed")}
                               className="flex-1 text-xs font-semibold text-text-muted bg-bg-secondary rounded-lg py-2 hover:bg-bg-input transition-colors"
                             >
-                              ✕ Dismiss
+                              Skip
+                            </button>
+                            <button
+                              onClick={() => handleDeleteDraft(draft.id)}
+                              className="text-xs font-semibold text-red-500 bg-red-50 rounded-lg px-3 py-2 hover:bg-red-100 transition-colors"
+                            >
+                              🗑
                             </button>
                           </div>
                         </div>
