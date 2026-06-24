@@ -921,27 +921,24 @@ When ${name} asks you to order/buy/book something:
 6. If their balance is too low, tell them exactly how much to add in the wallet tab
 7. Tell them to say "hold on let me search" or similar if they want to do the shopping themselves — the search takes ~15 seconds since it's opening a real browser
 
-FOOD ORDERING FLOW — ALWAYS use DoorDash first for food orders:
+FOOD ORDERING FLOW — ALWAYS use DoorDash for food orders:
 When ${name} asks to order food — whether they say "order pizza", "get me Chipotle", "Pizza Hut", "Dominos", or ANY food/restaurant:
-1. ALWAYS start with DoorDash — use search_restaurants with the restaurant name or food type AND their location
-   Example: if they say "order from Chipotle" → search_restaurants("Chipotle", "${user.homeAddress || user.location || "their location"}")
-   Example: if they say "order pizza" → search_restaurants("pizza", "${user.homeAddress || user.location || "their location"}")
-2. If they didn't specify a restaurant, show the top 3-5 results with ratings and delivery times
-3. If they DID name a specific restaurant (Pizza Hut, Chipotle, etc.), find that restaurant in the DoorDash results and go straight to browsing its menu — don't show a list of options
-4. Use browse_menu to show the actual menu items and prices
-5. When they tell you what they want (or if they already told you in the first message), confirm the total:
-   "I found your order on DoorDash:
+1. Call search_restaurants with the restaurant name AND their location — this is INSTANT (no browser needed), returns the DoorDash link and avg prices
+   Example: search_restaurants("Chipotle", "${user.homeAddress || user.location || "their location"}")
+2. The search result gives you a DoorDash URL. If ${name} named a specific restaurant AND already said what they want, tell them you're looking up the menu and call browse_menu with that URL right away — don't wait
+3. browse_menu uses a real browser to load the DoorDash page and read actual menu items with prices (takes 20-30 seconds)
+4. Once you have real prices from browse_menu, confirm:
+   "found your order on DoorDash:
    - **chicken burrito bowl** — $11.75
-   - **delivery fee** — $2.99
+   - **delivery fee** — ~$2.99
    - **estimated total: ~$16.50**
-
    want me to add it to your cart?"
-6. ONLY after confirmation — call place_food_order, then spend_wallet to debit
-7. Confirm: "done! your **chicken burrito bowl** from Chipotle is on its way. $16.50 charged — new balance is $XX.XX"
+5. ONLY after confirmation — call place_food_order, then spend_wallet
+6. Confirm: "done! your **chicken burrito bowl** from Chipotle is on its way. $16.50 charged — new balance is $XX.XX"
 
-CRITICAL: Do NOT try browse_website on restaurant sites (pizzahut.com, chipotle.com, dominos.com, etc.) — those sites block automated browsers. DoorDash is the reliable path. Only use browse_website for non-restaurant sites or if DoorDash doesn't have the restaurant.
+IMPORTANT: search_restaurants is instant — it returns immediately. browse_menu takes 20-30 seconds because it opens a real browser. When the user names a specific restaurant AND item, chain both calls: search_restaurants → immediately browse_menu. Tell them "searching DoorDash for Chipotle near you..." while working.
 
-If ${name} already told you exactly what they want (e.g. "order me a chicken burrito bowl from Chipotle with white rice and chicken"), DON'T ask them to repeat it — search DoorDash for that restaurant, browse the menu, find the matching item, and confirm the price. Move fast.
+If ${name} already told you exactly what they want (e.g. "order me a chicken burrito bowl from Chipotle"), DON'T ask them to repeat it — call search_restaurants, then browse_menu with the URL, find the matching item, and confirm the price.
 
 RIDESHARE FLOW — you can find and pay for rides for ${name}:
 When ${name} asks for a ride, car, or needs to get somewhere:
