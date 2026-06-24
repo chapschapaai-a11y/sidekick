@@ -622,18 +622,17 @@ async function handleToolCall(
       address: string;
       directUrl?: string;
     }> = {
-      ledger: { name: "Ledger", platform: "resy", slug: "ledger-salem", cuisine: "New American", priceRange: "$$$", address: "125 Washington St, Salem, MA" },
-      bambolina: { name: "Bambolina", platform: "resy", slug: "bambolina-salem", cuisine: "Italian, Wood-Fired Pizza", priceRange: "$$", address: "288 Derby St, Salem, MA" },
-      settler: { name: "Settler", platform: "resy", slug: "settler-salem", cuisine: "New American, Cocktail Bar", priceRange: "$$$", address: "80 Wharf St, Salem, MA" },
-      kokeshi: { name: "Kokeshi", platform: "resy", slug: "kokeshi-salem", cuisine: "Japanese, Ramen", priceRange: "$$", address: "1 Boston St, Salem, MA" },
-      adriatic: { name: "Adriatic", platform: "resy", slug: "adriatic-salem", cuisine: "Mediterranean", priceRange: "$$$", address: "85 Congress St, Salem, MA" },
+      ledger: { name: "Ledger Restaurant & Bar", platform: "opentable", slug: "ledger-restaurant-and-bar-salem", cuisine: "New American", priceRange: "$$$", address: "125 Washington St, Salem, MA" },
+      bambolina: { name: "Bambolina", platform: "opentable", slug: "bambolina-salem", cuisine: "Italian, Wood-Fired Pizza", priceRange: "$$", address: "288 Derby St, Salem, MA" },
+      settler: { name: "Settler", platform: "resy", slug: "settler", cuisine: "New American, Cocktail Bar", priceRange: "$$$", address: "3 Lynde St, Salem, MA" },
+      bernadette: { name: "Bernadette", platform: "resy", slug: "bernadette", cuisine: "French Bistro", priceRange: "$$$", address: "264 Essex St, Salem, MA" },
+      adriatic: { name: "Adriatic Restaurant & Bar", platform: "opentable", slug: "adriatic-restaurant-and-bar-salem", cuisine: "Mediterranean, European", priceRange: "$$$", address: "155 Washington St, Salem, MA" },
       "turner's seafood": { name: "Turner's Seafood", platform: "opentable", slug: "turners-seafood-at-lyceum-hall-salem", cuisine: "Seafood", priceRange: "$$$", address: "43 Church St, Salem, MA" },
       turners: { name: "Turner's Seafood", platform: "opentable", slug: "turners-seafood-at-lyceum-hall-salem", cuisine: "Seafood", priceRange: "$$$", address: "43 Church St, Salem, MA" },
       "sea level": { name: "Sea Level Oyster Bar", platform: "opentable", slug: "sea-level-oyster-bar-salem", cuisine: "Seafood, Raw Bar", priceRange: "$$$", address: "94 Wharf St, Salem, MA" },
       "sea level oyster bar": { name: "Sea Level Oyster Bar", platform: "opentable", slug: "sea-level-oyster-bar-salem", cuisine: "Seafood, Raw Bar", priceRange: "$$$", address: "94 Wharf St, Salem, MA" },
       finz: { name: "Finz Seafood & Grill", platform: "opentable", slug: "finz-seafood-and-grill-salem", cuisine: "Seafood", priceRange: "$$$", address: "76 Wharf St, Salem, MA" },
       "mercy tavern": { name: "Mercy Tavern", platform: "opentable", slug: "mercy-tavern-salem", cuisine: "American, Pub", priceRange: "$$", address: "148 Derby St, Salem, MA" },
-      opus: { name: "Opus", platform: "resy", slug: "opus-salem", cuisine: "Underground Cocktail Lounge", priceRange: "$$$", address: "63 Wharf St, Salem, MA" },
       "life alive": { name: "Life Alive", platform: "direct", slug: "life-alive-salem", cuisine: "Organic, Plant-Based", priceRange: "$$", address: "261 Essex St, Salem, MA", directUrl: "https://www.lifealive.com/salem" },
       "howling wolf": { name: "Howling Wolf Taqueria", platform: "direct", slug: "howling-wolf", cuisine: "Mexican", priceRange: "$", address: "76 Lafayette St, Salem, MA", directUrl: "https://www.howlingwolftaqueria.com" },
       "flying saucer": { name: "Flying Saucer Pizza", platform: "direct", slug: "flying-saucer", cuisine: "Pizza", priceRange: "$", address: "118 Washington St, Salem, MA", directUrl: "https://www.flyingsaucerpizza.com" },
@@ -649,9 +648,9 @@ async function handleToolCall(
       let platform = r.platform;
 
       if (r.platform === "resy") {
-        reservationUrl = `https://resy.com/cities/bos/${r.slug}?date=${date}&seats=${partySize}`;
+        reservationUrl = `https://resy.com/cities/salem-ma/venues/${r.slug}?date=${date}&seats=${partySize}`;
       } else if (r.platform === "opentable") {
-        reservationUrl = `https://www.opentable.com/r/${r.slug}?covers=${partySize}&dateTime=${date}T${time}&restref=&corrid=`;
+        reservationUrl = `https://www.opentable.com/r/${r.slug}?covers=${partySize}&dateTime=${date}T${time}`;
       } else {
         reservationUrl = r.directUrl || `https://www.google.com/search?q=${encodeURIComponent(r.name + " Salem MA reservations")}`;
       }
