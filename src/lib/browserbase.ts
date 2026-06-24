@@ -8,7 +8,6 @@ const bb = new Browserbase({
 
 export async function createBrowserSession(contextId?: string) {
   const browserSettings: Record<string, unknown> = {
-    advancedStealth: true,
     solveCaptchas: true,
     blockAds: true,
   };
@@ -20,7 +19,6 @@ export async function createBrowserSession(contextId?: string) {
   const session = await bb.sessions.create({
     projectId: process.env.BROWSERBASE_PROJECT_ID!,
     browserSettings,
-    proxies: true,
   } as Record<string, unknown>);
 
   const browser = await chromium.connectOverCDP(session.connectUrl!);
