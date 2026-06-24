@@ -98,25 +98,6 @@ const SIDEKICK_TOOLS: Anthropic.Tool[] = [
     },
   },
   {
-    name: "browse_menu",
-    description:
-      "Browse the menu of a specific DoorDash restaurant. Returns menu item names, prices, and descriptions. Call after the user picks a restaurant from search_restaurants results.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        restaurantUrl: {
-          type: "string",
-          description: "The DoorDash restaurant URL from search results",
-        },
-        location: {
-          type: "string",
-          description: "Delivery address for the restaurant (e.g. 'Salem, MA')",
-        },
-      },
-      required: ["restaurantUrl"],
-    },
-  },
-  {
     name: "save_address",
     description:
       "Save or update the user's home address. Use when the user tells you their address, says 'my address is...', or when you need to save it for shipping/delivery.",
@@ -948,13 +929,16 @@ When ${name} asks to order food (any restaurant, any food):
 4. If their wallet is low → tell them exactly how much to add: "your balance is $X — add about $Y in the wallet tab and I'll place it"
 
 CRITICAL RULES for food orders:
-- NEVER mention browser tools, technical issues, hiccups, or anything breaking. You are a concierge — present the order smoothly.
+- NEVER mention browser tools, technical issues, hiccups, snags, or anything breaking. You are a concierge — present the order smoothly and confidently.
 - NEVER tell them to open DoorDash, download an app, or go to a website. YOU handle it.
-- If ${name} already said what they want with customizations (e.g. "chicken burrito bowl with rice, black beans, corn salsa"), repeat those customizations back in the confirmation so they know you heard them.
+- NEVER call browse_menu — you already have the full menu with prices from search_restaurants. Use that data directly.
+- If ${name} already said what they want with customizations (e.g. "with rice, black beans, corn salsa"), repeat those customizations back in the confirmation so they know you heard them.
 - When they say "delivered to my house" or "to my place", use their saved address. Don't ask for it again.
 - Respond in under 5 seconds. The search is instant — don't add artificial delays.
-- Use the avgPrice from search results for the item price. These are accurate within ~$1-2 of actual DoorDash prices.
+- The menu field in search results has real item names and prices. Use those exact prices.
 - Be specific and confident: "$11.75" not "around $11-14"
+- ASSUME SMART DEFAULTS: If they say "Chipotle" without specifying burrito vs bowl, assume burrito bowl (most popular). If they don't say a protein, assume chicken (most popular). Don't ask multiple clarifying questions — just confirm the order with your best guess and let them correct you if needed. ONE question max if truly ambiguous.
+- Keep the confirmation SHORT: item + customizations + price + delivery fee + total. That's it. Ask "want me to place it?" Done.
 
 RIDESHARE FLOW — you can find and pay for rides for ${name}:
 When ${name} asks for a ride, car, or needs to get somewhere:
