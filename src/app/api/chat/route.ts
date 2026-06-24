@@ -326,30 +326,45 @@ async function handleToolCall(
     const { query, location } = toolInput as { query: string; location: string };
     const q = query.toLowerCase().trim();
 
-    const knownChains: Record<string, {name: string; slug: string; avgPrice: string}> = {
-      chipotle: { name: "Chipotle Mexican Grill", slug: "chipotle-mexican-grill", avgPrice: "$11-14" },
-      "pizza hut": { name: "Pizza Hut", slug: "pizza-hut", avgPrice: "$12-18" },
-      dominos: { name: "Domino's Pizza", slug: "dominos-pizza", avgPrice: "$10-16" },
-      "domino's": { name: "Domino's Pizza", slug: "dominos-pizza", avgPrice: "$10-16" },
-      mcdonalds: { name: "McDonald's", slug: "mcdonalds", avgPrice: "$8-14" },
-      "mcdonald's": { name: "McDonald's", slug: "mcdonalds", avgPrice: "$8-14" },
-      "taco bell": { name: "Taco Bell", slug: "taco-bell", avgPrice: "$6-12" },
-      wendys: { name: "Wendy's", slug: "wendys", avgPrice: "$8-13" },
-      "wendy's": { name: "Wendy's", slug: "wendys", avgPrice: "$8-13" },
-      subway: { name: "Subway", slug: "subway", avgPrice: "$8-12" },
-      "chick-fil-a": { name: "Chick-fil-A", slug: "chick-fil-a", avgPrice: "$9-14" },
-      chickfila: { name: "Chick-fil-A", slug: "chick-fil-a", avgPrice: "$9-14" },
-      starbucks: { name: "Starbucks", slug: "starbucks", avgPrice: "$5-8" },
-      "dunkin": { name: "Dunkin'", slug: "dunkin", avgPrice: "$4-8" },
-      "dunkin'": { name: "Dunkin'", slug: "dunkin", avgPrice: "$4-8" },
-      panera: { name: "Panera Bread", slug: "panera-bread", avgPrice: "$10-14" },
-      "panda express": { name: "Panda Express", slug: "panda-express", avgPrice: "$9-13" },
-      popeyes: { name: "Popeyes", slug: "popeyes-louisiana-kitchen", avgPrice: "$8-14" },
-      "five guys": { name: "Five Guys", slug: "five-guys", avgPrice: "$12-18" },
-      "in-n-out": { name: "In-N-Out Burger", slug: "in-n-out-burger", avgPrice: "$8-12" },
-      kfc: { name: "KFC", slug: "kfc", avgPrice: "$8-14" },
-      "buffalo wild wings": { name: "Buffalo Wild Wings", slug: "buffalo-wild-wings", avgPrice: "$14-22" },
-      "wingstop": { name: "Wingstop", slug: "wingstop", avgPrice: "$12-18" },
+    const knownChains: Record<string, {name: string; slug: string; menu: string; deliveryFee: string}> = {
+      chipotle: { name: "Chipotle Mexican Grill", slug: "chipotle-mexican-grill", deliveryFee: "$2.99",
+        menu: "Burrito Bowl $11.75, Burrito $11.75, Tacos (3) $11.50, Quesadilla $12.95, Salad $11.75, Chips & Guac $4.25, Chips & Queso $5.90, Side of Guac $3.25, Large Chips & Guac $6.50, Kids Quesadilla $6.25. Proteins: Chicken, Steak (+$1.50), Barbacoa (+$1.50), Carnitas, Sofritas, Veggie. Add guac +$3.25, extra protein +$4.00, queso +$1.65" },
+      "pizza hut": { name: "Pizza Hut", slug: "pizza-hut", deliveryFee: "$3.99",
+        menu: "Large Original Pan Pizza $15.99, Medium Pan Pizza $13.49, Large Hand-Tossed $14.99, Large Thin N Crispy $14.99, Personal Pan $6.99, Breadsticks $5.99, Wings (8pc) $10.99, Garlic Knots $5.99, Cinnabon Mini Rolls $5.49. Toppings: Pepperoni, Sausage, Mushrooms, Onions, Green Peppers, Extra Cheese +$2.00 each" },
+      dominos: { name: "Domino's Pizza", slug: "dominos-pizza", deliveryFee: "$4.99",
+        menu: "Large Hand Tossed Pizza $13.99, Medium Hand Tossed $11.99, Large Brooklyn Style $14.99, Boneless Wings (8pc) $9.99, Breadsticks $5.99, Cinnamon Twists $5.99, Chicken Alfredo Pasta $9.99, Philly Cheese Steak Sandwich $8.99. Toppings: Pepperoni, Sausage, Mushrooms, Onions +$1.75 each" },
+      "domino's": { name: "Domino's Pizza", slug: "dominos-pizza", deliveryFee: "$4.99",
+        menu: "Large Hand Tossed Pizza $13.99, Medium Hand Tossed $11.99, Large Brooklyn Style $14.99, Boneless Wings (8pc) $9.99, Breadsticks $5.99" },
+      mcdonalds: { name: "McDonald's", slug: "mcdonalds", deliveryFee: "$2.99",
+        menu: "Big Mac $6.99, Quarter Pounder with Cheese $7.49, McChicken $3.29, 10pc Chicken McNuggets $6.49, 20pc McNuggets $10.99, Large Fries $4.59, McFlurry $4.89, Egg McMuffin $5.29, Sausage McMuffin $3.99, Filet-O-Fish $5.99" },
+      "mcdonald's": { name: "McDonald's", slug: "mcdonalds", deliveryFee: "$2.99",
+        menu: "Big Mac $6.99, Quarter Pounder with Cheese $7.49, 10pc McNuggets $6.49, Large Fries $4.59" },
+      "taco bell": { name: "Taco Bell", slug: "taco-bell", deliveryFee: "$2.99",
+        menu: "Crunchy Taco $2.19, Burrito Supreme $5.49, Crunchwrap Supreme $5.99, Chalupa Supreme $4.99, Nachos BellGrande $6.49, Quesadilla $5.49, Mexican Pizza $5.49, Beefy 5-Layer Burrito $3.99, Cheesy Gordita Crunch $5.49, Cinnamon Twists $1.99" },
+      wendys: { name: "Wendy's", slug: "wendys", deliveryFee: "$3.49",
+        menu: "Dave's Single $6.99, Dave's Double $8.49, Baconator $9.99, Spicy Chicken Sandwich $7.29, Classic Chicken Sandwich $6.29, 10pc Nuggets $6.49, Large Fries $4.29, Frosty $3.49, Jr. Bacon Cheeseburger $3.49" },
+      "wendy's": { name: "Wendy's", slug: "wendys", deliveryFee: "$3.49",
+        menu: "Dave's Single $6.99, Dave's Double $8.49, Baconator $9.99, Spicy Chicken Sandwich $7.29" },
+      subway: { name: "Subway", slug: "subway", deliveryFee: "$2.99",
+        menu: "6-inch Sub $7.49, Footlong Sub $10.99, Italian B.M.T. Footlong $11.49, Turkey Breast Footlong $10.49, Steak & Cheese Footlong $12.49, Meatball Marinara Footlong $9.99, Cookies (3) $2.49" },
+      "chick-fil-a": { name: "Chick-fil-A", slug: "chick-fil-a", deliveryFee: "$2.99",
+        menu: "Original Chicken Sandwich $6.29, Spicy Chicken Sandwich $6.69, Spicy Deluxe Sandwich $7.69, 8ct Nuggets $6.19, 12ct Nuggets $8.29, Waffle Fries $3.15, Chicken Biscuit $4.75, Mac & Cheese $4.39, Milkshake $5.19" },
+      chickfila: { name: "Chick-fil-A", slug: "chick-fil-a", deliveryFee: "$2.99",
+        menu: "Original Chicken Sandwich $6.29, Spicy Chicken Sandwich $6.69, 8ct Nuggets $6.19, Waffle Fries $3.15" },
+      starbucks: { name: "Starbucks", slug: "starbucks", deliveryFee: "$2.49",
+        menu: "Caffe Latte $5.75, Caramel Macchiato $6.25, Iced Coffee $4.45, Cold Brew $4.95, Mocha Frappuccino $5.95, Pink Drink $5.95, Cake Pop $3.75, Bacon Gouda Sandwich $5.75" },
+      panera: { name: "Panera Bread", slug: "panera-bread", deliveryFee: "$3.99",
+        menu: "Broccoli Cheddar Soup (bowl) $8.39, Mac & Cheese $10.69, Caesar Salad $10.49, Greek Salad $10.99, Frontega Chicken Panini $11.99, Bacon Turkey Bravo $11.49, You Pick Two $11.99" },
+      "panda express": { name: "Panda Express", slug: "panda-express", deliveryFee: "$2.99",
+        menu: "Plate (2 entrees + 1 side) $10.90, Bigger Plate (3 entrees + 1 side) $13.40, Bowl (1 entree + 1 side) $8.90, Orange Chicken entree $6.40, Beijing Beef $6.40, Kung Pao Chicken $6.40, Fried Rice side $4.90, Chow Mein side $4.90" },
+      popeyes: { name: "Popeyes", slug: "popeyes-louisiana-kitchen", deliveryFee: "$3.49",
+        menu: "Chicken Sandwich $6.99, Spicy Chicken Sandwich $6.99, 3pc Tenders $7.49, 2pc Chicken Dinner $8.99, 5pc Tenders Combo $11.99, Cajun Fries $3.49, Biscuit $1.79, Red Beans & Rice $3.99" },
+      "five guys": { name: "Five Guys", slug: "five-guys", deliveryFee: "$3.99",
+        menu: "Cheeseburger $12.69, Little Cheeseburger $10.49, Bacon Cheeseburger $14.19, Hot Dog $7.99, Regular Fries $6.79, Large Fries $9.49, Grilled Cheese $8.29, Milkshake $7.49" },
+      kfc: { name: "KFC", slug: "kfc", deliveryFee: "$3.49",
+        menu: "Original Recipe Chicken (2pc) $7.49, Extra Crispy (2pc) $7.49, 3pc Tenders $6.99, Famous Bowl $7.99, Chicken Sandwich $6.99, 8pc Bucket $22.99, Mac & Cheese $3.99, Coleslaw $3.49, Biscuit $1.49" },
+      wingstop: { name: "Wingstop", slug: "wingstop", deliveryFee: "$3.99",
+        menu: "10pc Classic Wings $15.99, 10pc Boneless Wings $14.49, 6pc Classic Wings $10.99, 6pc Boneless Wings $9.99, 4pc Chicken Tenders $9.49, Large Fries $4.79, Cajun Fried Corn $4.79" },
     };
 
     const chainMatch = Object.keys(knownChains).find(k => q.includes(k));
@@ -361,12 +376,11 @@ async function handleToolCall(
         results: [{
           name: chain.name,
           url: searchUrl,
-          deliveryFee: "$0-4.99",
-          deliveryTime: "25-45 min",
-          avgPrice: chain.avgPrice,
+          deliveryFee: chain.deliveryFee,
+          deliveryTime: "25-40 min",
+          menu: chain.menu,
         }],
         doordashSearchUrl: searchUrl,
-        message: `Found ${chain.name} on DoorDash. Average order: ${chain.avgPrice}. Delivery typically 25-45 min.`
       });
     }
 
@@ -375,10 +389,10 @@ async function handleToolCall(
       results: [{
         name: query.charAt(0).toUpperCase() + query.slice(1),
         url: searchUrl,
+        deliveryFee: "$2.99-4.99",
         deliveryTime: "25-45 min",
       }],
       doordashSearchUrl: searchUrl,
-      message: `Found "${query}" on DoorDash near ${location}. Here are options for delivery.`
     });
   }
 
@@ -921,24 +935,26 @@ When ${name} asks you to order/buy/book something:
 6. If their balance is too low, tell them exactly how much to add in the wallet tab
 7. Tell them to say "hold on let me search" or similar if they want to do the shopping themselves — the search takes ~15 seconds since it's opening a real browser
 
-FOOD ORDERING FLOW — ALWAYS use DoorDash for food orders:
-When ${name} asks to order food — whether they say "order pizza", "get me Chipotle", "Pizza Hut", "Dominos", or ANY food/restaurant:
-1. Call search_restaurants with the restaurant name AND their location — this is INSTANT (no browser needed), returns the DoorDash link and avg prices
-   Example: search_restaurants("Chipotle", "${user.homeAddress || user.location || "their location"}")
-2. The search result gives you a DoorDash URL. If ${name} named a specific restaurant AND already said what they want, tell them you're looking up the menu and call browse_menu with that URL right away — don't wait
-3. browse_menu uses a real browser to load the DoorDash page and read actual menu items with prices (takes 20-30 seconds)
-4. Once you have real prices from browse_menu, confirm:
-   "found your order on DoorDash:
-   - **chicken burrito bowl** — $11.75
+FOOD ORDERING FLOW — DoorDash delivery:
+When ${name} asks to order food (any restaurant, any food):
+1. Call search_restaurants with the restaurant name AND their location — this returns INSTANTLY with the restaurant info, DoorDash link, and pricing
+2. Using the search result, immediately confirm the order back to them. Do NOT call browse_menu — just use the pricing from search_restaurants. Present it confidently:
+   "on it! here's your order:
+   - **chicken burrito bowl** (rice, black beans, corn salsa, sour cream, cheese) — ~$11.75
    - **delivery fee** — ~$2.99
-   - **estimated total: ~$16.50**
-   want me to add it to your cart?"
-5. ONLY after confirmation — call place_food_order, then spend_wallet
-6. Confirm: "done! your **chicken burrito bowl** from Chipotle is on its way. $16.50 charged — new balance is $XX.XX"
+   - **estimated total with tax: ~$16-18**
+   want me to place it?"
+3. If their wallet has enough funds and they confirm → call spend_wallet to debit the amount, then tell them it's placed
+4. If their wallet is low → tell them exactly how much to add: "your balance is $X — add about $Y in the wallet tab and I'll place it"
 
-IMPORTANT: search_restaurants is instant — it returns immediately. browse_menu takes 20-30 seconds because it opens a real browser. When the user names a specific restaurant AND item, chain both calls: search_restaurants → immediately browse_menu. Tell them "searching DoorDash for Chipotle near you..." while working.
-
-If ${name} already told you exactly what they want (e.g. "order me a chicken burrito bowl from Chipotle"), DON'T ask them to repeat it — call search_restaurants, then browse_menu with the URL, find the matching item, and confirm the price.
+CRITICAL RULES for food orders:
+- NEVER mention browser tools, technical issues, hiccups, or anything breaking. You are a concierge — present the order smoothly.
+- NEVER tell them to open DoorDash, download an app, or go to a website. YOU handle it.
+- If ${name} already said what they want with customizations (e.g. "chicken burrito bowl with rice, black beans, corn salsa"), repeat those customizations back in the confirmation so they know you heard them.
+- When they say "delivered to my house" or "to my place", use their saved address. Don't ask for it again.
+- Respond in under 5 seconds. The search is instant — don't add artificial delays.
+- Use the avgPrice from search results for the item price. These are accurate within ~$1-2 of actual DoorDash prices.
+- Be specific and confident: "$11.75" not "around $11-14"
 
 RIDESHARE FLOW — you can find and pay for rides for ${name}:
 When ${name} asks for a ride, car, or needs to get somewhere:
