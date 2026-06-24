@@ -221,6 +221,33 @@ const SIDEKICK_TOOLS: Anthropic.Tool[] = [
       required: ["startDate", "endDate"],
     },
   },
+  {
+    name: "make_reservation",
+    description:
+      "Find a restaurant and generate a pre-filled reservation link on OpenTable or Resy. Use when the user wants to book a table, make a reservation, or get a res somewhere. Returns the restaurant info and a one-tap booking link with date, time, and party size pre-filled.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        restaurant: {
+          type: "string",
+          description: "Restaurant name (e.g. 'Ledger', 'Turner\\'s Seafood', 'Bambolina')",
+        },
+        date: {
+          type: "string",
+          description: "Reservation date in YYYY-MM-DD format (e.g. '2026-06-25')",
+        },
+        time: {
+          type: "string",
+          description: "Reservation time in HH:MM 24-hour format (e.g. '19:00' for 7pm)",
+        },
+        partySize: {
+          type: "number",
+          description: "Number of guests (e.g. 2)",
+        },
+      },
+      required: ["restaurant", "date", "time", "partySize"],
+    },
+  },
 ];
 
 async function handleToolCall(
@@ -575,6 +602,87 @@ async function handleToolCall(
     }
     await prisma.user.update({ where: { id: userId }, data: updateData });
     return JSON.stringify({ success: true, saved: updateData });
+  }
+
+  if (toolName === "make_reservation") {
+    const { restaurant, date, time, partySize } = toolInput as {
+      restaurant: string;
+      date: string;
+      time: string;
+      partySize: number;
+    };
+    const q = restaurant.toLowerCase().trim();
+
+    const salemRestaurants: Record<string, {
+      name: string;
+      platform: "opentable" | "resy" | "direct";
+      slug: string;
+      cuisine: string;
+      priceRange: string;
+      address: string;
+      directUrl?: string;
+    }> = {
+      ledger: { name: "Ledger", platform: "resy", slug: "ledger-salem", cuisine: "New American", priceRange: "$$$", address: "125 Washington St, Salem, MA" },
+      bambolina: { name: "Bambolina", platform: "resy", slug: "bambolina-salem", cuisine: "Italian, Wood-Fired Pizza", priceRange: "$$", address: "288 Derby St, Salem, MA" },
+      settler: { name: "Settler", platform: "resy", slug: "settler-salem", cuisine: "New American, Cocktail Bar", priceRange: "$$$", address: "80 Wharf St, Salem, MA" },
+      kokeshi: { name: "Kokeshi", platform: "resy", slug: "kokeshi-salem", cuisine: "Japanese, Ramen", priceRange: "$$", address: "1 Boston St, Salem, MA" },
+      adriatic: { name: "Adriatic", platform: "resy", slug: "adriatic-salem", cuisine: "Mediterranean", priceRange: "$$$", address: "85 Congress St, Salem, MA" },
+      "turner's seafood": { name: "Turner's Seafood", platform: "opentable", slug: "turners-seafood-at-lyceum-hall-salem", cuisine: "Seafood", priceRange: "$$$", address: "43 Church St, Salem, MA" },
+      turners: { name: "Turner's Seafood", platform: "opentable", slug: "turners-seafood-at-lyceum-hall-salem", cuisine: "Seafood", priceRange: "$$$", address: "43 Church St, Salem, MA" },
+      "sea level": { name: "Sea Level Oyster Bar", platform: "opentable", slug: "sea-level-oyster-bar-salem", cuisine: "Seafood, Raw Bar", priceRange: "$$$", address: "94 Wharf St, Salem, MA" },
+      "sea level oyster bar": { name: "Sea Level Oyster Bar", platform: "opentable", slug: "sea-level-oyster-bar-salem", cuisine: "Seafood, Raw Bar", priceRange: "$$$", address: "94 Wharf St, Salem, MA" },
+      finz: { name: "Finz Seafood & Grill", platform: "opentable", slug: "finz-seafood-and-grill-salem", cuisine: "Seafood", priceRange: "$$$", address: "76 Wharf St, Salem, MA" },
+      "mercy tavern": { name: "Mercy Tavern", platform: "opentable", slug: "mercy-tavern-salem", cuisine: "American, Pub", priceRange: "$$", address: "148 Derby St, Salem, MA" },
+      opus: { name: "Opus", platform: "resy", slug: "opus-salem", cuisine: "Underground Cocktail Lounge", priceRange: "$$$", address: "63 Wharf St, Salem, MA" },
+      "life alive": { name: "Life Alive", platform: "direct", slug: "life-alive-salem", cuisine: "Organic, Plant-Based", priceRange: "$$", address: "261 Essex St, Salem, MA", directUrl: "https://www.lifealive.com/salem" },
+      "howling wolf": { name: "Howling Wolf Taqueria", platform: "direct", slug: "howling-wolf", cuisine: "Mexican", priceRange: "$", address: "76 Lafayette St, Salem, MA", directUrl: "https://www.howlingwolftaqueria.com" },
+      "flying saucer": { name: "Flying Saucer Pizza", platform: "direct", slug: "flying-saucer", cuisine: "Pizza", priceRange: "$", address: "118 Washington St, Salem, MA", directUrl: "https://www.flyingsaucerpizza.com" },
+      "bit bar": { name: "Bit Bar", platform: "direct", slug: "bit-bar", cuisine: "American, Arcade Bar", priceRange: "$$", address: "50 St. Peter St, Salem, MA", directUrl: "https://www.bitbarsalem.com" },
+      "notch brewing": { name: "Notch Brewing", platform: "direct", slug: "notch-brewing", cuisine: "Brewery, Beer Garden", priceRange: "$$", address: "283 Derby St, Salem, MA", directUrl: "https://www.notchbrewing.com" },
+    };
+
+    const match = Object.keys(salemRestaurants).find(k => q.includes(k));
+
+    if (match) {
+      const r = salemRestaurants[match];
+      let reservationUrl: string;
+      let platform = r.platform;
+
+      if (r.platform === "resy") {
+        reservationUrl = `https://resy.com/cities/bos/${r.slug}?date=${date}&seats=${partySize}`;
+      } else if (r.platform === "opentable") {
+        reservationUrl = `https://www.opentable.com/r/${r.slug}?covers=${partySize}&dateTime=${date}T${time}&restref=&corrid=`;
+      } else {
+        reservationUrl = r.directUrl || `https://www.google.com/search?q=${encodeURIComponent(r.name + " Salem MA reservations")}`;
+      }
+
+      const timeFormatted = new Date(`2000-01-01T${time}`).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+      const dateFormatted = new Date(date + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+
+      return JSON.stringify({
+        found: true,
+        restaurant: r.name,
+        cuisine: r.cuisine,
+        priceRange: r.priceRange,
+        address: r.address,
+        platform,
+        date: dateFormatted,
+        time: timeFormatted,
+        partySize,
+        reservationUrl,
+      });
+    }
+
+    const fallbackUrl = `https://www.opentable.com/s?term=${encodeURIComponent(restaurant)}&covers=${partySize}&dateTime=${date}T${time}&metroId=4&regionIds=&neighborhoodIds=`;
+    return JSON.stringify({
+      found: false,
+      restaurant,
+      partySize,
+      date: new Date(date + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" }),
+      time: new Date(`2000-01-01T${time}`).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }),
+      searchUrl: fallbackUrl,
+      message: `Couldn't find ${restaurant} in the local database. Here's an OpenTable search link.`,
+    });
   }
 
   if (toolName === "check_calendar") {
@@ -939,6 +1047,26 @@ CRITICAL RULES for food orders:
 - Be specific and confident: "$11.75" not "around $11-14"
 - ASSUME SMART DEFAULTS: If they say "Chipotle" without specifying burrito vs bowl, assume burrito bowl (most popular). If they don't say a protein, assume chicken (most popular). Don't ask multiple clarifying questions — just confirm the order with your best guess and let them correct you if needed. ONE question max if truly ambiguous.
 - Keep the confirmation SHORT: item + customizations + price + delivery fee + total. That's it. Ask "want me to place it?" Done.
+
+RESTAURANT RESERVATIONS — you can book tables for ${name}:
+When ${name} asks to make a reservation, get a table, book a spot, etc.:
+1. Figure out: restaurant name, date, time, party size. Today is ${new Date().toISOString().split("T")[0]}. Convert relative dates ("tomorrow", "this Friday") to YYYY-MM-DD format. Convert times to 24-hour format (7pm → 19:00). Default to party of 2 if not specified.
+2. Call make_reservation — this returns INSTANTLY with the restaurant info and a pre-filled booking link
+3. Present it smoothly and confidently:
+   "on it! found **Ledger** on Resy — here's your reservation:
+   - **2 people**, Wednesday June 25 at 7:00 PM
+   - 125 Washington St, Salem
+
+   [tap here to confirm your table](reservation_url)"
+4. If the restaurant isn't in our local database, the tool returns an OpenTable search link. Present that: "I don't have Ledger's direct booking, but here's an OpenTable search — [find your table here](url)"
+
+CRITICAL RULES for reservations:
+- NEVER say "I can't make reservations" or "you'll need to call them." Present the link confidently.
+- NEVER mention technical details about OpenTable/Resy APIs or how the link was generated.
+- Keep it SHORT: restaurant name + date/time + party size + link. That's it.
+- If they don't specify party size, assume 2. If they don't specify a time, ask for one.
+- For "tomorrow" — calculate the actual date. For "this Friday" — calculate the actual date. Never pass relative dates to the tool.
+- The link takes them directly to the reservation page with everything pre-filled. One tap to confirm.
 
 RIDESHARE FLOW — you can find and pay for rides for ${name}:
 When ${name} asks for a ride, car, or needs to get somewhere:
