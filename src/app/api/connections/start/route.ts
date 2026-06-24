@@ -3,10 +3,20 @@ import { prisma } from "@/lib/db";
 import { getSessionUserId } from "@/lib/auth";
 import WS from "ws";
 
-function navigateCDP(connectUrl: string, url: string): Promise<void> {
+function navigateCDP(connectUrl: string, url: string): Promise<{ success: boolean; error?: string }> {
   return new Promise((resolve) => {
-    const ws = new WS(connectUrl);
-    const timeout = setTimeout(() => resolve(), 10000);
+    const timeout = setTimeout(() => {
+      resolve({ success: false, error: "CDP connection timed out after 15s" });
+    }, 15000);
+
+    let ws: WS;
+    try {
+      ws = new WS(connectUrl);
+    } catch (e) {
+      clearTimeout(timeout);
+      resolve({ success: false, error: `WebSocket creation failed: ${e}` });
+      return;
+    }
 
     ws.on("open", () => {
       ws.send(JSON.stringify({
@@ -21,18 +31,25 @@ function navigateCDP(connectUrl: string, url: string): Promise<void> {
         const data = JSON.parse(String(raw));
         if (data.id === 1) {
           clearTimeout(timeout);
-          // Don't close the WebSocket — let it die with the function.
-          // Closing it signals Browserbase the session is done.
-          resolve();
+          if (data.error) {
+            resolve({ success: false, error: `CDP navigate error: ${JSON.stringify(data.error)}` });
+          } else {
+            resolve({ success: true });
+          }
         }
       } catch {
-        // ignore
+        // ignore non-JSON frames
       }
     });
 
-    ws.on("error", () => {
+    ws.on("error", (err) => {
       clearTimeout(timeout);
-      resolve();
+      resolve({ success: false, error: `WebSocket error: ${err.message}` });
+    });
+
+    ws.on("close", (code, reason) => {
+      clearTimeout(timeout);
+      resolve({ success: false, error: `WebSocket closed: ${code} ${reason}` });
     });
   });
 }
@@ -84,10 +101,14 @@ export async function POST(req: NextRequest) {
     step = "creating browser session";
     const session = await bb.sessions.create({
       projectId: process.env.BROWSERBASE_PROJECT_ID,
+      keepAlive: true,
       browserSettings: {
         context: { id: contextId, persist: true },
       },
     });
+
+    step = "getting debug URL";
+    const liveUrls = await bb.sessions.debug(session.id);
 
     step = "saving integration";
     await prisma.integration.upsert({
@@ -106,16 +127,15 @@ export async function POST(req: NextRequest) {
     });
 
     step = "navigating to login page";
-    await navigateCDP(session.connectUrl!, LOGIN_URLS[provider]);
-
-    step = "getting debug URL";
-    const liveUrls = await bb.sessions.debug(session.id);
+    const navResult = await navigateCDP(session.connectUrl!, LOGIN_URLS[provider]);
 
     return Response.json({
       sessionId: session.id,
       contextId,
       liveUrl: liveUrls.debuggerFullscreenUrl,
       loginUrl: LOGIN_URLS[provider],
+      navigationSuccess: navResult.success,
+      navigationError: navResult.error || null,
     });
   } catch (e) {
     return Response.json(

@@ -69,6 +69,7 @@ export default function ConnectedApps() {
   const [connectingApp, setConnectingApp] = useState<string | null>(null);
   const [sessionUrl, setSessionUrl] = useState<string | null>(null);
   const [loginUrl, setLoginUrl] = useState<string | null>(null);
+  const [navFailed, setNavFailed] = useState(false);
   const [showCalendarWizard, setShowCalendarWizard] = useState(false);
   const [calendarSubs, setCalendarSubs] = useState<CalendarSub[]>([]);
 
@@ -112,6 +113,7 @@ export default function ConnectedApps() {
   async function handleConnect(appId: string) {
     setConnectingApp(appId);
     setConnectError(null);
+    setNavFailed(false);
     try {
       const res = await fetch("/api/connections/start", {
         method: "POST",
@@ -122,6 +124,9 @@ export default function ConnectedApps() {
       if (data.liveUrl) {
         setSessionUrl(data.liveUrl);
         setLoginUrl(data.loginUrl || null);
+        if (data.navigationSuccess === false) {
+          setNavFailed(true);
+        }
       } else {
         setConnectError(data.detail || data.error || "Couldn't start browser session");
         setConnectingApp(null);
@@ -174,7 +179,7 @@ export default function ConnectedApps() {
       <div className="flex flex-col h-full bg-white">
         <div className="flex items-center gap-3 px-5 py-3 border-b border-[#f0f0f0]">
           <button
-            onClick={() => { setConnectingApp(null); setSessionUrl(null); setLoginUrl(null); }}
+            onClick={() => { setConnectingApp(null); setSessionUrl(null); setLoginUrl(null); setNavFailed(false); }}
             className="text-text-muted text-sm"
           >
             ← Back
@@ -183,6 +188,14 @@ export default function ConnectedApps() {
             Log in to {app?.name}
           </h3>
         </div>
+
+        {navFailed && loginUrl && (
+          <div className="px-5 py-2 bg-amber-50 border-b border-amber-200">
+            <p className="text-xs text-amber-800 text-center">
+              Navigate to <strong>{loginUrl}</strong> in the browser above to log in
+            </p>
+          </div>
+        )}
 
         <div className="flex-1 flex flex-col">
           <iframe
