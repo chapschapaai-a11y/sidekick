@@ -224,7 +224,7 @@ const SIDEKICK_TOOLS: Anthropic.Tool[] = [
   {
     name: "make_reservation",
     description:
-      "Find a restaurant and generate a pre-filled reservation link on OpenTable or Resy. Use when the user wants to book a table, make a reservation, or get a res somewhere. Returns the restaurant info and a one-tap booking link with date, time, and party size pre-filled.",
+      "Look up a restaurant and check availability. Returns restaurant info, platform (OpenTable/Resy), and reservation URL. Call this FIRST to get restaurant details before booking.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -246,6 +246,41 @@ const SIDEKICK_TOOLS: Anthropic.Tool[] = [
         },
       },
       required: ["restaurant", "date", "time", "partySize"],
+    },
+  },
+  {
+    name: "complete_reservation",
+    description:
+      "Actually complete a restaurant reservation using browser automation. Opens OpenTable/Resy in a real browser, selects the time slot, fills in the user's info, and confirms the booking. Call this AFTER make_reservation and AFTER the user confirms details (seating preference, etc.). Takes 30-60 seconds.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        reservationUrl: {
+          type: "string",
+          description: "The OpenTable or Resy URL from make_reservation results",
+        },
+        restaurantName: {
+          type: "string",
+          description: "Restaurant name for confirmation",
+        },
+        date: {
+          type: "string",
+          description: "Reservation date (e.g. 'Thursday, June 25')",
+        },
+        time: {
+          type: "string",
+          description: "Desired time (e.g. '7:00 PM')",
+        },
+        partySize: {
+          type: "number",
+          description: "Number of guests",
+        },
+        seatingPreference: {
+          type: "string",
+          description: "Seating preference if any (e.g. 'indoor', 'outdoor', 'bar', 'patio'). Leave empty if not specified.",
+        },
+      },
+      required: ["reservationUrl", "restaurantName", "time", "partySize"],
     },
   },
 ];
@@ -684,6 +719,98 @@ async function handleToolCall(
     });
   }
 
+  if (toolName === "complete_reservation") {
+    const { reservationUrl, restaurantName, time, partySize, seatingPreference } = toolInput as {
+      reservationUrl: string;
+      restaurantName: string;
+      date?: string;
+      time: string;
+      partySize: number;
+      seatingPreference?: string;
+    };
+    try {
+      const { browseWebsite } = await getBrowserbase();
+      const user = await prisma.user.findUnique({ where: { id: userId } });
+      const firstName = user?.name?.split(" ")[0] || "Guest";
+      const lastName = user?.name?.split(" ").slice(1).join(" ") || "";
+      const email = user?.email || "";
+      const phone = user?.phone || "";
+
+      let cardDetails: { number: string; expMonth: number; expYear: number; cvc: string } | undefined;
+      const wallet = await prisma.wallet.findUnique({ where: { userId } });
+      if (wallet?.virtualCardReady && wallet.stripeCardId) {
+        try {
+          const { getVirtualCardDetails } = await import("@/lib/stripe");
+          const card = await getVirtualCardDetails(wallet.stripeCardId);
+          cardDetails = { number: card.number, expMonth: card.expMonth, expYear: card.expYear, cvc: card.cvc };
+        } catch {
+          // Card details unavailable
+        }
+      }
+
+      const seatingInstruction = seatingPreference
+        ? `If there is a seating preference option (indoor/outdoor/bar/patio), select "${seatingPreference}". `
+        : "";
+
+      const cardInstruction = cardDetails
+        ? `If a credit card is required, use: Card number ${cardDetails.number}, Exp ${String(cardDetails.expMonth).padStart(2, "0")}/${cardDetails.expYear}, CVC ${cardDetails.cvc}. `
+        : "";
+
+      const result = await browseWebsite(
+        reservationUrl,
+        `Complete a restaurant reservation on this page. Follow these steps EXACTLY:\n` +
+        `1. The page should show ${restaurantName} on OpenTable with ${partySize} people and the time pre-selected.\n` +
+        `2. Look for available time slots near ${time}. Click on the time slot closest to ${time}. If ${time} is not available, pick the nearest available time and note what you selected.\n` +
+        `3. ${seatingInstruction}If there is a seating preference dropdown or option and no preference was specified, leave it as the default.\n` +
+        `4. You should reach a form asking for diner details. Fill in:\n` +
+        `   - First name: ${firstName}\n` +
+        `   - Last name: ${lastName}\n` +
+        `   - Email: ${email}\n` +
+        `   - Phone: ${phone}\n` +
+        `5. ${cardInstruction}\n` +
+        `6. If there are any special requests or notes fields, leave them empty.\n` +
+        `7. Review the reservation details, then click the final "Complete reservation" or "Confirm" button.\n` +
+        `8. After clicking confirm, wait for the confirmation page to load.\n` +
+        `9. Return "done" with: CONFIRMED: [restaurant name] | DATE: [date] | TIME: [time selected] | PARTY: [number] | CONFIRMATION: [any confirmation number shown]\n` +
+        `If you cannot complete the reservation (no times available, error, etc.), return: FAILED: [reason]\n` +
+        `IMPORTANT: Do NOT stop before clicking the final confirm button. Complete the entire booking.`,
+        { name: user?.name || "", email, phone, address: user?.homeAddress || "" }
+      );
+
+      if (result.success && result.summary) {
+        const confirmed = result.summary.includes("CONFIRMED");
+        const timeMatch = result.summary.match(/TIME:\s*(.+?)(?:\s*\||$)/i);
+        const confMatch = result.summary.match(/CONFIRMATION:\s*(.+?)(?:\s*\||$)/i);
+
+        if (confirmed) {
+          return JSON.stringify({
+            success: true,
+            restaurant: restaurantName,
+            timeBooked: timeMatch ? timeMatch[1].trim() : time,
+            partySize,
+            confirmationNumber: confMatch ? confMatch[1].trim() : null,
+            summary: result.summary,
+          });
+        }
+      }
+
+      return JSON.stringify({
+        success: false,
+        restaurant: restaurantName,
+        error: result.summary || "Could not complete the reservation",
+        fallbackUrl: reservationUrl,
+      });
+    } catch (e) {
+      return JSON.stringify({
+        success: false,
+        restaurant: restaurantName,
+        error: "Reservation booking failed",
+        detail: String(e),
+        fallbackUrl: reservationUrl,
+      });
+    }
+  }
+
   if (toolName === "check_calendar") {
     const { startDate, endDate } = toolInput as { startDate: string; endDate: string };
     try {
@@ -1047,25 +1174,29 @@ CRITICAL RULES for food orders:
 - ASSUME SMART DEFAULTS: If they say "Chipotle" without specifying burrito vs bowl, assume burrito bowl (most popular). If they don't say a protein, assume chicken (most popular). Don't ask multiple clarifying questions — just confirm the order with your best guess and let them correct you if needed. ONE question max if truly ambiguous.
 - Keep the confirmation SHORT: item + customizations + price + delivery fee + total. That's it. Ask "want me to place it?" Done.
 
-RESTAURANT RESERVATIONS — you MUST use the make_reservation tool:
+RESTAURANT RESERVATIONS — you book the table, ${name} just shows up:
 When ${name} asks to make a reservation, get a table, book a spot, or anything involving dining out at a sit-down restaurant:
-1. ALWAYS call make_reservation. Do NOT try to answer from memory, suggest calling the restaurant, or give multiple options. Just call the tool.
-2. Figure out: restaurant name, date, time, party size. Today is ${new Date().toISOString().split("T")[0]}. Convert relative dates ("tomorrow" = the next day, "this Friday" = the upcoming Friday) to YYYY-MM-DD format. Convert times to 24-hour format (7pm → 19:00, 7:30 → 19:30). Default to party of 2 if not specified.
-3. Call make_reservation with those exact parameters — it returns INSTANTLY with the restaurant info and a one-tap booking link
-4. Present it smoothly and confidently with the link:
-   "on it! here's your reservation at **Ledger**:
-   - **2 people** · Wednesday, June 25 · 7:00 PM
-   - 125 Washington St, Salem
-   [tap here to book your table](reservation_url)"
-5. If the restaurant isn't in our local database, the tool returns a search link. Present that: "here's a link to find your table — [book on OpenTable](url)"
+1. ALWAYS call make_reservation first. Do NOT try to answer from memory or suggest calling the restaurant. Today is ${new Date().toISOString().split("T")[0]}. Convert relative dates ("tomorrow" = the next day, "this Friday" = the upcoming Friday) to YYYY-MM-DD. Convert times to 24-hour (7pm → 19:00). Default to party of 2 if not specified.
+2. After make_reservation returns, confirm the details and ask about seating preference:
+   "booking **Ledger** for **2** tomorrow at **7pm** — do you have a seating preference? inside, outside, bar?"
+3. Once ${name} confirms (or says they don't care), call complete_reservation with:
+   - reservationUrl from make_reservation
+   - restaurantName, date, time, partySize
+   - seatingPreference (if they specified one)
+   Tell them: "on it, booking now — give me about 30 seconds..."
+4. When complete_reservation succeeds, confirm:
+   "you're all set! **Ledger**, Thursday June 25 at 7:00 PM, party of 2. just show up and enjoy."
+5. If complete_reservation fails, present the fallback link:
+   "couldn't finish the booking automatically — [tap here to complete it](fallbackUrl)"
 
 CRITICAL RULES for reservations:
-- ALWAYS call make_reservation. Never skip the tool. Never suggest calling the restaurant instead. Never give multiple booking options. One link, one tap, done.
-- NEVER say "I can't make reservations", "you'll need to call them", "I wasn't able to", or anything suggesting failure.
-- NEVER mention OpenTable, Resy, or any platform by name unless the tool result includes it. Just present the link.
-- Keep it SHORT: restaurant name + date/time + party size + address + one booking link. That's it.
+- ALWAYS use the tools. Never suggest calling the restaurant or going to a website yourself.
+- NEVER say "I can't make reservations" or anything suggesting failure unless the tool actually failed.
+- Ask about seating preference ONCE before booking. If they say "I don't care" or similar, proceed with no preference.
 - If they don't specify party size, assume 2. If they don't specify a time, ask for one.
-- The link takes them directly to the reservation page with everything pre-filled. One tap to confirm.
+- complete_reservation takes 30-60 seconds (browser automation). Tell ${name} you're working on it so they know to wait.
+- If a credit card is needed, the virtual card from their wallet is used automatically.
+- The goal is: ${name} says what they want → you handle everything → they just show up.
 
 RIDESHARE FLOW — you can find and pay for rides for ${name}:
 When ${name} asks for a ride, car, or needs to get somewhere:
