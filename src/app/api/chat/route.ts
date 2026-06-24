@@ -415,11 +415,13 @@ async function handleToolCall(
       where: { userId },
       include: { transactions: { orderBy: { createdAt: "desc" }, take: 5 } },
     });
-    if (!wallet) return JSON.stringify({ balance: 0, hasCard: false });
+    if (!wallet) return JSON.stringify({ balance: 0, hasCard: false, virtualCardReady: false });
     return JSON.stringify({
       balance: wallet.balance,
       hasCard: !!wallet.cardLast4,
       cardInfo: wallet.cardLast4 ? `${wallet.cardBrand} •••• ${wallet.cardLast4}` : null,
+      virtualCardReady: wallet.virtualCardReady,
+      virtualCardLast4: wallet.virtualCardLast4,
       recentTransactions: wallet.transactions.map((t) => ({
         amount: t.amount,
         type: t.type,
@@ -444,7 +446,20 @@ async function handleToolCall(
         if (!userInfo.phone && user.phone) userInfo.phone = user.phone;
         if (!userInfo.address && user.homeAddress) userInfo.address = user.homeAddress;
       }
-      const result = await browseWebsite(url, task, userInfo);
+
+      let cardDetails: { number: string; expMonth: number; expYear: number; cvc: string } | undefined;
+      const wallet = await prisma.wallet.findUnique({ where: { userId } });
+      if (wallet?.virtualCardReady && wallet.stripeCardId) {
+        try {
+          const { getVirtualCardDetails } = await import("@/lib/stripe");
+          const card = await getVirtualCardDetails(wallet.stripeCardId);
+          cardDetails = { number: card.number, expMonth: card.expMonth, expYear: card.expYear, cvc: card.cvc };
+        } catch {
+          // Virtual card details unavailable — browser will skip payment autofill
+        }
+      }
+
+      const result = await browseWebsite(url, task, userInfo, undefined, cardDetails);
       return JSON.stringify(result);
     } catch (e) {
       return JSON.stringify({ success: false, error: "Browser automation failed", detail: String(e) });
@@ -716,6 +731,8 @@ interface WalletRecord {
   balance: number;
   cardLast4: string | null;
   cardBrand: string | null;
+  virtualCardReady: boolean;
+  virtualCardLast4: string | null;
 }
 
 function buildSystemPrompt(
@@ -786,7 +803,7 @@ ${emails.length > 0 ? `\nRECENT EMAILS:\n${emails.map((e) => `- ${e.unread ? "�
 ${taskContext}${doneContext}
 
 WALLET:
-${wallet ? `Balance: $${wallet.balance.toFixed(2)}${wallet.cardLast4 ? ` | Card: ${wallet.cardBrand} •••• ${wallet.cardLast4}` : ""}` : "No wallet set up yet."}
+${wallet ? `Balance: $${wallet.balance.toFixed(2)}${wallet.cardLast4 ? ` | Funding card: ${wallet.cardBrand} •••• ${wallet.cardLast4}` : ""}${wallet.virtualCardReady ? ` | Virtual debit card: •••• ${wallet.virtualCardLast4} (ready for online purchases)` : " | No virtual card yet — tell them to activate it in the wallet tab"}` : "No wallet set up yet."}
 
 PURCHASE FLOW — you can buy things for ${name} using their wallet and real browser automation:
 When ${name} asks you to order/buy/book something:
@@ -823,9 +840,10 @@ When ${name} asks you to order from a specific restaurant (Chipotle, Pizza Hut, 
 1. Use browse_website with the restaurant/store URL and a detailed task description
 2. Include their full order details in the task (items, customizations, delivery address)
 3. The browser will auto-fill ${name}'s name, email, phone, and address into checkout forms
-4. Report back what happened — the total, what's in the cart, etc.
-5. If the site needs a login, tell ${name} and offer to open it for them to log in quickly
-6. The browser remembers logins between sessions — they only need to log in once per site
+4. If ${name} has a virtual card activated, the browser will also auto-fill their Sidekick debit card at checkout — no need for them to enter payment info
+5. Report back what happened — the total, what's in the cart, etc.
+6. If the site needs a login, tell ${name} and offer to open it for them to log in quickly
+7. The browser remembers logins between sessions — they only need to log in once per site
 
 What you can do:
 - **ANY website** — browse_website can navigate, click, fill forms, and place orders on any site. Use this for restaurant websites (Chipotle, Pizza Hut, Dominos, Panera, etc.), any store, any service.

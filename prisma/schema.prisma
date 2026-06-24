@@ -93,6 +93,10 @@ model Wallet {
   defaultPaymentMethod  String?
   cardLast4             String?
   cardBrand             String?
+  stripeCardholderId    String?
+  stripeCardId          String?
+  virtualCardLast4      String?
+  virtualCardReady      Boolean  @default(false)
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 

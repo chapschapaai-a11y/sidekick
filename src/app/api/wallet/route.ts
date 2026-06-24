@@ -27,6 +27,8 @@ export async function GET() {
     balance: wallet.balance,
     cardLast4: wallet.cardLast4,
     cardBrand: wallet.cardBrand,
+    virtualCardReady: wallet.virtualCardReady,
+    virtualCardLast4: wallet.virtualCardLast4,
     transactions: wallet.transactions,
   });
 }

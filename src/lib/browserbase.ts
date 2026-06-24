@@ -547,6 +547,7 @@ export async function browseWebsite(
   task: string,
   autofill?: { name?: string; email?: string; phone?: string; address?: string },
   contextId?: string,
+  paymentCard?: { number: string; expMonth: number; expYear: number; cvc: string },
 ): Promise<BrowseResult> {
   const anthropic = new Anthropic();
   const { browser, page } = await createBrowserSession(contextId);
@@ -557,6 +558,10 @@ export async function browseWebsite(
 
     const autofillContext = autofill
       ? `\nUser info for auto-filling forms:\n- Name: ${autofill.name || "not provided"}\n- Email: ${autofill.email || "not provided"}\n- Phone: ${autofill.phone || "not provided"}\n- Address: ${autofill.address || "not provided"}`
+      : "";
+
+    const paymentContext = paymentCard
+      ? `\nPayment card for checkout (Sidekick virtual debit card):\n- Card number: ${paymentCard.number}\n- Expiry: ${String(paymentCard.expMonth).padStart(2, "0")}/${paymentCard.expYear}\n- CVC: ${paymentCard.cvc}\n- Name on card: ${autofill?.name || "Sidekick User"}\nWhen you reach a payment/checkout page, enter these card details into the card number, expiry, and CVC fields.`
       : "";
 
     const stepSummaries: string[] = [];
@@ -614,7 +619,7 @@ export async function browseWebsite(
           content: `You are a browser automation agent. Complete this task step by step.
 
 TASK: ${task}
-${autofillContext}
+${autofillContext}${paymentContext}
 
 CURRENT PAGE:
 URL: ${currentUrl}

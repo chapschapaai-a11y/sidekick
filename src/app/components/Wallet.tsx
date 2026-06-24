@@ -27,6 +27,8 @@ interface WalletData {
   balance: number;
   cardLast4: string | null;
   cardBrand: string | null;
+  virtualCardReady: boolean;
+  virtualCardLast4: string | null;
   transactions: TransactionItem[];
 }
 
@@ -44,6 +46,21 @@ function WalletInner() {
     useState<ReturnType<typeof stripe extends null ? never : NonNullable<typeof stripe>["paymentRequest"]> | null>(null);
   const [canPaymentRequest, setCanPaymentRequest] = useState(false);
   const [applePayAmount, setApplePayAmount] = useState(25);
+  const [activatingCard, setActivatingCard] = useState(false);
+
+  const activateVirtualCard = useCallback(async () => {
+    setActivatingCard(true);
+    try {
+      const res = await fetch("/api/wallet/virtual-card", { method: "POST" });
+      const result = await res.json();
+      if (result.ready) {
+        setData((prev) =>
+          prev ? { ...prev, virtualCardReady: true, virtualCardLast4: result.last4 } : prev
+        );
+      }
+    } catch {}
+    setActivatingCard(false);
+  }, []);
 
   useEffect(() => {
     fetch("/api/wallet")
@@ -228,6 +245,56 @@ function WalletInner() {
               </button>
             ))}
           </div>
+        </div>
+
+        {/* Virtual Card */}
+        <div
+          className="mb-5 animate-fade-up"
+          style={{ animationDelay: "0.07s" }}
+        >
+          {data?.virtualCardReady ? (
+            <div className="bg-white rounded-2xl shadow-[0_1px_3px_rgba(0,0,0,0.04)] p-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-lime/20 flex items-center justify-center text-lg">
+                  💳
+                </div>
+                <div className="flex-1">
+                  <div className="text-text-primary text-sm font-semibold">
+                    Virtual Debit Card
+                  </div>
+                  <div className="text-text-muted text-xs mt-0.5">
+                    Visa •••• {data.virtualCardLast4} — used by Luna at checkout
+                  </div>
+                </div>
+                <span className="text-[10px] font-semibold text-success bg-success/10 px-2 py-1 rounded-full">
+                  Active
+                </span>
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={activateVirtualCard}
+              disabled={activatingCard}
+              className="w-full bg-white border border-border rounded-2xl p-4 shadow-[0_1px_3px_rgba(0,0,0,0.04)] hover:border-lime/40 transition-colors disabled:opacity-50"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-bg-input flex items-center justify-center text-lg">
+                  💳
+                </div>
+                <div className="flex-1 text-left">
+                  <div className="text-text-primary text-sm font-semibold">
+                    {activatingCard ? "Creating card..." : "Activate Virtual Card"}
+                  </div>
+                  <div className="text-text-muted text-xs mt-0.5">
+                    Luna uses this card to pay on any website
+                  </div>
+                </div>
+                <span className="text-xs font-semibold text-lime">
+                  {activatingCard ? "..." : "Activate"}
+                </span>
+              </div>
+            </button>
+          )}
         </div>
 
         {/* Apple Pay / Google Pay */}

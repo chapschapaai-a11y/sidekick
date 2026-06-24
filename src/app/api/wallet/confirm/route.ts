@@ -1,6 +1,6 @@
 import { getSessionUserId } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { stripe } from "@/lib/stripe";
+import { stripe, updateCardSpendingLimit } from "@/lib/stripe";
 
 export async function POST(req: Request) {
   const userId = await getSessionUserId();
@@ -50,6 +50,11 @@ export async function POST(req: Request) {
       description: `Added $${amount.toFixed(2)} via ${label}`,
     },
   });
+
+  if (wallet.stripeCardId && wallet.virtualCardReady) {
+    const newBalanceCents = Math.round(wallet.balance * 100);
+    await updateCardSpendingLimit(wallet.stripeCardId, Math.max(newBalanceCents, 100)).catch(() => {});
+  }
 
   return Response.json({ balance: wallet.balance });
 }
