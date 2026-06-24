@@ -15,12 +15,26 @@ export async function createIssuingCardholder(
   email: string,
   phone?: string,
 ): Promise<string> {
+  const nameParts = name.trim().split(/\s+/);
+  const firstName = nameParts[0] || "User";
+  const lastName = nameParts.slice(1).join(" ") || "Sidekick";
+
   const cardholder = await stripe.issuing.cardholders.create({
     name,
     email,
     phone_number: phone || undefined,
     type: "individual",
     status: "active",
+    individual: {
+      first_name: firstName,
+      last_name: lastName,
+      card_issuing: {
+        user_terms_acceptance: {
+          date: Math.floor(Date.now() / 1000),
+          ip: "127.0.0.1",
+        },
+      },
+    },
     billing: {
       address: {
         line1: "354 Oyster Point Blvd",
