@@ -325,10 +325,50 @@ async function handleToolCall(
   if (toolName === "search_restaurants") {
     const { query, location } = toolInput as { query: string; location: string };
     try {
-      const { searchDoorDashRestaurants } = await getBrowserbase();
-      const results = await searchDoorDashRestaurants(query, location);
+      const { browseWebsite } = await getBrowserbase();
+      const searchUrl = `https://www.doordash.com/search/store/${encodeURIComponent(query)}/?pickup=false`;
+      const result = await browseWebsite(
+        searchUrl,
+        `Search DoorDash for "${query}" restaurants that deliver to "${location}". ` +
+        `If the page asks for a delivery address, enter "${location}" and select the best autocomplete suggestion. ` +
+        `Then find restaurant results on the page. For each restaurant, note: the restaurant name, any rating, delivery fee, delivery time, and the DoorDash URL (href containing /store/). ` +
+        `Return "done" with a summary listing each restaurant in this exact format:\n` +
+        `RESTAURANT: [name] | RATING: [X.X] | FEE: [$X.XX delivery] | TIME: [XX-XX min] | URL: [full doordash URL]\n` +
+        `List up to 5 restaurants. If no results found, say "No restaurants found for this search."`
+      );
+
+      if (!result.success || !result.summary) {
+        return JSON.stringify({ results: [], message: "No restaurants found on DoorDash. Try a different search." });
+      }
+
+      const lines = result.summary.split("\n").filter((l: string) => l.includes("RESTAURANT:") || l.includes("URL:"));
+      const results: Array<{name: string; url: string; rating?: string; deliveryFee?: string; deliveryTime?: string}> = [];
+
+      const restaurantBlocks = result.summary.split(/RESTAURANT:/i).filter((b: string) => b.trim());
+      for (const block of restaurantBlocks) {
+        const nameMatch = block.match(/^\s*(.+?)(?:\s*\||\s*RATING)/);
+        const ratingMatch = block.match(/RATING:\s*(\d\.\d)/i);
+        const feeMatch = block.match(/FEE:\s*(\$[\d.]+)/i);
+        const timeMatch = block.match(/TIME:\s*([\d]+-[\d]+\s*min)/i);
+        const urlMatch = block.match(/URL:\s*(https?:\/\/[^\s|]+)/i);
+
+        if (nameMatch) {
+          results.push({
+            name: nameMatch[1].trim(),
+            url: urlMatch ? urlMatch[1].trim() : `https://www.doordash.com/search/store/${encodeURIComponent(query)}/`,
+            rating: ratingMatch ? ratingMatch[1] : undefined,
+            deliveryFee: feeMatch ? feeMatch[1] : undefined,
+            deliveryTime: timeMatch ? timeMatch[1] : undefined,
+          });
+        }
+      }
+
       if (results.length === 0) {
-        return JSON.stringify({ results: [], message: "No restaurants found. Try a different search or cuisine." });
+        return JSON.stringify({
+          results: [],
+          rawSummary: result.summary,
+          message: "DoorDash search completed but couldn't parse restaurant results. Here's what was found: " + result.summary
+        });
       }
       return JSON.stringify({ results });
     } catch (e) {
@@ -339,23 +379,81 @@ async function handleToolCall(
   if (toolName === "browse_menu") {
     const { restaurantUrl, location } = toolInput as { restaurantUrl: string; location?: string };
     try {
-      const { browseDoorDashMenu } = await getBrowserbase();
-      const menu = await browseDoorDashMenu(restaurantUrl, location);
-      if (menu.items.length === 0) {
-        return JSON.stringify({ restaurantName: menu.restaurantName, items: [], message: "Couldn't load the menu. The restaurant might require a login or the page layout changed." });
+      const { browseWebsite } = await getBrowserbase();
+      const result = await browseWebsite(
+        restaurantUrl,
+        `Browse this DoorDash restaurant menu page. ` +
+        (location ? `If asked for a delivery address, enter "${location}" and select the autocomplete suggestion. ` : "") +
+        `Scroll through the menu and find food items with their prices. ` +
+        `Return "done" with the restaurant name and menu items in this exact format:\n` +
+        `RESTAURANT: [name]\n` +
+        `ITEM: [item name] | PRICE: $[X.XX] | DESC: [brief description]\n` +
+        `List up to 15 menu items. Include the most popular or featured items first.`
+      );
+
+      if (!result.success || !result.summary) {
+        return JSON.stringify({ restaurantName: "Unknown", items: [], message: "Couldn't load the menu." });
       }
-      return JSON.stringify(menu);
+
+      const restaurantMatch = result.summary.match(/RESTAURANT:\s*(.+)/i);
+      const restaurantName = restaurantMatch ? restaurantMatch[1].trim() : "Restaurant";
+
+      const items: Array<{name: string; price: number; description?: string}> = [];
+      const itemBlocks = result.summary.split(/ITEM:/i).filter((b: string) => b.trim());
+      for (const block of itemBlocks) {
+        const nameMatch = block.match(/^\s*(.+?)(?:\s*\||\s*PRICE)/);
+        const priceMatch = block.match(/PRICE:\s*\$?([\d.]+)/i);
+        const descMatch = block.match(/DESC:\s*(.+?)(?:\n|$)/i);
+
+        if (nameMatch && priceMatch) {
+          items.push({
+            name: nameMatch[1].trim(),
+            price: parseFloat(priceMatch[1]),
+            description: descMatch ? descMatch[1].trim() : undefined,
+          });
+        }
+      }
+
+      if (items.length === 0) {
+        return JSON.stringify({
+          restaurantName,
+          items: [],
+          rawSummary: result.summary,
+          message: "Menu loaded but couldn't parse items. Here's what was found: " + result.summary
+        });
+      }
+      return JSON.stringify({ restaurantName, items });
     } catch (e) {
       return JSON.stringify({ error: "Menu browsing failed.", detail: String(e) });
     }
   }
 
   if (toolName === "place_food_order") {
-    const { restaurantUrl, itemName } = toolInput as { restaurantUrl: string; itemName: string; restaurantName: string };
+    const { restaurantUrl, itemName, restaurantName } = toolInput as { restaurantUrl: string; itemName: string; restaurantName: string };
     try {
-      const { addDoorDashToCart } = await getBrowserbase();
-      const result = await addDoorDashToCart(restaurantUrl, itemName);
-      return JSON.stringify(result);
+      const { browseWebsite } = await getBrowserbase();
+      const result = await browseWebsite(
+        restaurantUrl,
+        `Add "${itemName}" to the DoorDash cart from this restaurant page. ` +
+        `Steps: 1) Find the menu item "${itemName}" on the page and click it. ` +
+        `2) If a customization/options modal appears, select reasonable defaults and click "Add to Cart" or similar. ` +
+        `3) After adding to cart, check the cart for the total price. ` +
+        `4) DO NOT click "Place Order" or "Checkout" — stop before finalizing. ` +
+        `Return "done" with: ITEM: [name] | TOTAL: $[X.XX] | STATUS: added to cart`
+      );
+
+      if (result.success) {
+        const totalMatch = result.summary?.match(/TOTAL:\s*\$?([\d.]+)/i);
+        const total = totalMatch ? parseFloat(totalMatch[1]) : 0;
+        return JSON.stringify({
+          success: true,
+          description: `${itemName} from ${restaurantName}`,
+          total,
+          vendor: `DoorDash — ${restaurantName}`,
+          summary: result.summary,
+        });
+      }
+      return JSON.stringify({ success: false, error: result.summary || "Failed to add item to cart", vendor: `DoorDash — ${restaurantName}` });
     } catch (e) {
       return JSON.stringify({ success: false, error: "Failed to add food to cart", detail: String(e) });
     }
