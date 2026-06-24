@@ -145,7 +145,7 @@ export default function Home() {
             window.location.reload();
           }} />}
           {tab === "chat" && <Chat state={state} />}
-          {tab === "wallet" && <Wallet />}
+          {tab === "wallet" && <Wallet sidekickName={authUser?.sidekickName || "Sidekick"} />}
           {tab === "apps" && <ConnectedApps />}
           {tab === "briefing" && <MorningBriefing />}
         </TabErrorBoundary>

@@ -34,7 +34,7 @@ interface WalletData {
 
 const QUICK_AMOUNTS = [10, 25, 50, 100];
 
-function WalletInner() {
+function WalletInner({ sidekickName }: { sidekickName: string }) {
   const stripe = useStripe();
   const elements = useElements();
   const [data, setData] = useState<WalletData | null>(null);
@@ -47,9 +47,11 @@ function WalletInner() {
   const [canPaymentRequest, setCanPaymentRequest] = useState(false);
   const [applePayAmount, setApplePayAmount] = useState(25);
   const [activatingCard, setActivatingCard] = useState(false);
+  const [cardError, setCardError] = useState<string | null>(null);
 
   const activateVirtualCard = useCallback(async () => {
     setActivatingCard(true);
+    setCardError(null);
     try {
       const res = await fetch("/api/wallet/virtual-card", { method: "POST" });
       const result = await res.json();
@@ -57,8 +59,12 @@ function WalletInner() {
         setData((prev) =>
           prev ? { ...prev, virtualCardReady: true, virtualCardLast4: result.last4 } : prev
         );
+      } else if (result.error) {
+        setCardError(result.error);
       }
-    } catch {}
+    } catch (e) {
+      setCardError("Something went wrong. Try again.");
+    }
     setActivatingCard(false);
   }, []);
 
@@ -263,7 +269,7 @@ function WalletInner() {
                     Virtual Debit Card
                   </div>
                   <div className="text-text-muted text-xs mt-0.5">
-                    Visa •••• {data.virtualCardLast4} — used by Luna at checkout
+                    Visa •••• {data.virtualCardLast4} — used by {sidekickName} at checkout
                   </div>
                 </div>
                 <span className="text-[10px] font-semibold text-success bg-success/10 px-2 py-1 rounded-full">
@@ -272,28 +278,35 @@ function WalletInner() {
               </div>
             </div>
           ) : (
-            <button
-              onClick={activateVirtualCard}
-              disabled={activatingCard}
-              className="w-full bg-white border border-border rounded-2xl p-4 shadow-[0_1px_3px_rgba(0,0,0,0.04)] hover:border-lime/40 transition-colors disabled:opacity-50"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-bg-input flex items-center justify-center text-lg">
-                  💳
-                </div>
-                <div className="flex-1 text-left">
-                  <div className="text-text-primary text-sm font-semibold">
-                    {activatingCard ? "Creating card..." : "Activate Virtual Card"}
+            <>
+              <button
+                onClick={activateVirtualCard}
+                disabled={activatingCard}
+                className="w-full bg-white border border-border rounded-2xl p-4 shadow-[0_1px_3px_rgba(0,0,0,0.04)] hover:border-lime/40 transition-colors disabled:opacity-50"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-bg-input flex items-center justify-center text-lg">
+                    💳
                   </div>
-                  <div className="text-text-muted text-xs mt-0.5">
-                    Luna uses this card to pay on any website
+                  <div className="flex-1 text-left">
+                    <div className="text-text-primary text-sm font-semibold">
+                      {activatingCard ? "Creating card..." : "Activate Virtual Card"}
+                    </div>
+                    <div className="text-text-muted text-xs mt-0.5">
+                      {sidekickName} uses this card to pay on any website
+                    </div>
                   </div>
+                  <span className="text-xs font-semibold text-lime">
+                    {activatingCard ? "..." : "Activate"}
+                  </span>
                 </div>
-                <span className="text-xs font-semibold text-lime">
-                  {activatingCard ? "..." : "Activate"}
-                </span>
-              </div>
-            </button>
+              </button>
+              {cardError && (
+                <div className="mt-2 p-3 rounded-xl bg-red-50 text-red-700 text-xs text-center">
+                  {cardError}
+                </div>
+              )}
+            </>
           )}
         </div>
 
@@ -442,10 +455,10 @@ function WalletInner() {
   );
 }
 
-export default function Wallet() {
+export default function Wallet({ sidekickName = "Sidekick" }: { sidekickName?: string }) {
   return (
     <Elements stripe={stripePromise}>
-      <WalletInner />
+      <WalletInner sidekickName={sidekickName} />
     </Elements>
   );
 }
