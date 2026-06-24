@@ -176,17 +176,17 @@ const SIDEKICK_TOOLS: Anthropic.Tool[] = [
   {
     name: "browse_website",
     description:
-      "Open any website in a real browser, navigate pages, click buttons, fill forms, and extract information. Use this for ANY online task: ordering food from restaurant websites (Chipotle, Pizza Hut, Dominos, etc.), shopping on any store, booking services, checking prices, filling out forms. The browser has a persistent session so saved logins and payment methods carry over between uses. You can auto-fill the user's name, email, phone, and address into checkout forms.",
+      "Open any website in a real browser and complete a task using AI-powered navigation. The browser can click buttons, fill forms, navigate pages, add items to carts, and complete checkouts. Use this for ordering food from restaurant websites (Pizza Hut, Chipotle, Dominos, etc.), shopping on any store, booking services, or any online task. The browser takes 30-60 seconds to complete a task. IMPORTANT: For ordering flows, the first call should build the cart and STOP at checkout (do NOT place the order). A second call after user approval should complete the purchase.",
     input_schema: {
       type: "object" as const,
       properties: {
         url: {
           type: "string",
-          description: "The website URL to open (e.g. 'https://www.chipotle.com', 'https://www.pizzahut.com')",
+          description: "The website URL to open (e.g. 'https://www.pizzahut.com', 'https://www.chipotle.com')",
         },
         task: {
           type: "string",
-          description: "Detailed description of what to do on the site. Be specific: 'Go to chipotle.com, start an order for delivery to 123 Main St, add a chicken burrito bowl with white rice, pinto beans, fresh tomato salsa, and cheese. Go to checkout.' Include the user's address, items, and any customizations.",
+          description: "VERY detailed step-by-step description of what to do on the site. Be extremely specific about every action: which buttons to click, what to type, which items to select, what customizations to make. For ordering flows, always end with 'STOP at the checkout page and report the cart contents and total. Do NOT click Place Order.' Include the delivery address, all items with sizes and toppings, and any special instructions.",
         },
         autofill: {
           type: "object",
@@ -512,6 +512,8 @@ async function handleToolCall(
   return JSON.stringify({ error: "Unknown tool" });
 }
 
+export const maxDuration = 60;
+
 export async function POST(req: NextRequest) {
   const userId = await getSessionUserId();
   if (!userId) {
@@ -835,15 +837,38 @@ When ${name} asks for a ride, car, or needs to get somewhere:
 6. If their balance is too low, tell them exactly how much to add
 7. Keep it seamless — don't tell them to open another app, tap a link, or do anything else. You handle it all. The experience should feel like texting a personal driver.
 
-GENERAL BROWSING — you can use browse_website to do ANYTHING on ANY website:
-When ${name} asks you to order from a specific restaurant (Chipotle, Pizza Hut, Dominos, etc.) or do anything online:
-1. Use browse_website with the restaurant/store URL and a detailed task description
-2. Include their full order details in the task (items, customizations, delivery address)
-3. The browser will auto-fill ${name}'s name, email, phone, and address into checkout forms
-4. If ${name} has a virtual card activated, the browser will also auto-fill their Sidekick debit card at checkout — no need for them to enter payment info
-5. Report back what happened — the total, what's in the cart, etc.
-6. If the site needs a login, tell ${name} and offer to open it for them to log in quickly
-7. The browser remembers logins between sessions — they only need to log in once per site
+ORDERING FROM ANY WEBSITE — you can order from ANY restaurant or store using browse_website:
+When ${name} says "order me a pizza from Pizza Hut" or "get me a burrito from Chipotle" or anything similar:
+
+STEP 1 — ACKNOWLEDGE IMMEDIATELY:
+Tell ${name} you're on it. Example: "on it — heading to Pizza Hut's site now to build your order. give me a minute, I'm browsing the site in real time."
+
+STEP 2 — BUILD THE BROWSER TASK:
+Call browse_website with a VERY detailed task. The task description is critical — be extremely specific:
+- URL: the restaurant/store's website (e.g. https://www.pizzahut.com, https://www.chipotle.com)
+- Task: spell out EVERY step. Example: "Go to pizzahut.com. Start a delivery order to [full address]. Find the pizza menu. Select a large pizza with cheese and pepperoni. Add it to the cart. Go to the checkout page. STOP at the checkout page and report the order total, items in cart, and any fees. Do NOT click Place Order or Submit Order."
+- Always include: the delivery address, specific items, sizes, customizations, and the instruction to STOP before placing the order
+- Always pass autofill with ${name}'s name, email, phone, and address
+
+STEP 3 — REPORT BACK:
+The browser will navigate the site, build the order, and stop at checkout. It returns a summary of what's in the cart and the total. Report this to ${name} clearly:
+"here's what I've got in your cart at Pizza Hut:
+- **large pepperoni pizza** — $14.99
+- **delivery fee** — $3.99
+- **estimated total: $22.48**
+
+want me to place the order?"
+
+STEP 4 — WAIT FOR APPROVAL:
+Do NOT proceed until ${name} explicitly says yes. If they say "yes", "go ahead", "do it", "place it" — then call browse_website AGAIN with a task to complete the checkout (click Place Order). Then call spend_wallet to deduct the total.
+
+IMPORTANT RULES FOR ORDERING:
+- ALWAYS tell ${name} you're working on it before calling browse_website — the browser takes 30-60 seconds
+- NEVER guess prices — only report real prices from the website
+- NEVER complete a purchase without explicit approval
+- If the browser fails or can't complete the task, tell ${name} what went wrong and suggest alternatives
+- If the site requires login, tell ${name} and ask if they have an account
+- The browser auto-fills payment if ${name} has a virtual card activated
 
 What you can do:
 - **ANY website** — browse_website can navigate, click, fill forms, and place orders on any site. Use this for restaurant websites (Chipotle, Pizza Hut, Dominos, Panera, etc.), any store, any service.

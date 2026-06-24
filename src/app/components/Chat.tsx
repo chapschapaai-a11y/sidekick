@@ -131,14 +131,19 @@ export default function Chat({ state }: Props) {
     setIsTyping(true);
 
     const lower = text.trim().toLowerCase();
-    if (lower.match(/order|food|pizza|burger|sushi|thai|chinese|mexican|delivery|doordash|uber eats|hungry/)) {
+    if (lower.match(/order.*from\s+(pizza|chipotle|domino|panera|mcdonald|taco|wendy|subway|chick-fil|starbuck|dunkin)/i)) {
+      setTypingStatus("browsing the website & building your order...");
+      setTimeout(() => { if (isTyping) setTypingStatus("still working — navigating menus..."); }, 15000);
+      setTimeout(() => { if (isTyping) setTypingStatus("almost there — adding items to cart..."); }, 30000);
+    } else if (lower.match(/order|food|pizza|burger|sushi|thai|chinese|mexican|delivery|doordash|uber eats|hungry/)) {
       setTypingStatus("searching restaurants...");
     } else if (lower.match(/menu|what do they have|what's on the menu/)) {
       setTypingStatus("browsing menu...");
     } else if (lower.match(/buy|book|amazon|purchase|order me/)) {
       setTypingStatus("searching products...");
-    } else if (lower.match(/yes|grab it|do it|go ahead|confirm|place the order/)) {
-      setTypingStatus("placing order...");
+    } else if (lower.match(/yes|grab it|do it|go ahead|confirm|place the order|place it|approve/)) {
+      setTypingStatus("placing your order...");
+      setTimeout(() => { if (isTyping) setTypingStatus("completing checkout..."); }, 10000);
     } else if (lower.match(/wallet|balance|how much/)) {
       setTypingStatus("checking wallet...");
     } else if (lower.match(/ride|uber|lyft|car|drive me|get me to|take me to|pick me up|drop me off/)) {

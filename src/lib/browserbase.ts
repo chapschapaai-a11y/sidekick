@@ -535,7 +535,7 @@ export interface BrowseResult {
 }
 
 interface BrowserAction {
-  action: "click" | "type" | "navigate" | "select" | "scroll" | "wait" | "done" | "fail";
+  action: "click" | "type" | "navigate" | "select" | "scroll" | "scroll_up" | "press_key" | "wait" | "done" | "fail";
   selector?: string;
   text?: string;
   url?: string;
@@ -554,26 +554,27 @@ export async function browseWebsite(
 
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(3000);
 
-    const autofillContext = autofill
-      ? `\nUser info for auto-filling forms:\n- Name: ${autofill.name || "not provided"}\n- Email: ${autofill.email || "not provided"}\n- Phone: ${autofill.phone || "not provided"}\n- Address: ${autofill.address || "not provided"}`
+    const autofillInfo = autofill
+      ? `\nUSER INFO (use to fill forms):\n- Name: ${autofill.name || "not provided"}\n- Email: ${autofill.email || "not provided"}\n- Phone: ${autofill.phone || "not provided"}\n- Address: ${autofill.address || "not provided"}`
       : "";
 
-    const paymentContext = paymentCard
-      ? `\nPayment card for checkout (Sidekick virtual debit card):\n- Card number: ${paymentCard.number}\n- Expiry: ${String(paymentCard.expMonth).padStart(2, "0")}/${paymentCard.expYear}\n- CVC: ${paymentCard.cvc}\n- Name on card: ${autofill?.name || "Sidekick User"}\nWhen you reach a payment/checkout page, enter these card details into the card number, expiry, and CVC fields.`
+    const paymentInfo = paymentCard
+      ? `\nPAYMENT CARD (use at checkout):\n- Card number: ${paymentCard.number}\n- Expiry: ${String(paymentCard.expMonth).padStart(2, "0")}/${paymentCard.expYear}\n- CVC: ${paymentCard.cvc}\n- Name on card: ${autofill?.name || "Sidekick User"}`
       : "";
 
-    const stepSummaries: string[] = [];
+    const conversationHistory: { role: "user" | "assistant"; content: string }[] = [];
+    const MAX_STEPS = 30;
 
-    for (let step = 0; step < 15; step++) {
+    for (let step = 0; step < MAX_STEPS; step++) {
       const title = await page.title().catch(() => "");
       const currentUrl = page.url();
 
       const interactiveElements: string[] = [];
-      const elements = await page.locator("a, button, input, select, textarea, [role='button'], [role='link'], [role='menuitem'], [role='tab']").all();
+      const elements = await page.locator("a, button, input, select, textarea, [role='button'], [role='link'], [role='menuitem'], [role='tab'], [role='option'], [role='checkbox'], [role='radio']").all();
 
-      for (let i = 0; i < Math.min(elements.length, 60); i++) {
+      for (let i = 0; i < Math.min(elements.length, 80); i++) {
         try {
           const el = elements[i];
           const visible = await el.isVisible().catch(() => false);
@@ -588,8 +589,9 @@ export async function browseWebsite(
           const name = await el.getAttribute("name").catch(() => "");
           const id = await el.getAttribute("id").catch(() => "");
           const value = await el.inputValue().catch(() => "");
+          const checked = await el.isChecked().catch(() => null);
 
-          const label = (text || "").trim().slice(0, 80);
+          const label = (text || "").trim().slice(0, 100);
           const desc = [
             tag,
             type ? `type=${type}` : "",
@@ -597,9 +599,10 @@ export async function browseWebsite(
             name ? `name="${name}"` : "",
             placeholder ? `placeholder="${placeholder}"` : "",
             ariaLabel ? `aria-label="${ariaLabel}"` : "",
-            href ? `href="${href.slice(0, 60)}"` : "",
+            href ? `href="${href.slice(0, 80)}"` : "",
             label ? `"${label}"` : "",
-            value ? `value="${value.slice(0, 40)}"` : "",
+            value ? `value="${value.slice(0, 50)}"` : "",
+            checked === true ? "checked" : "",
           ].filter(Boolean).join(" ");
 
           interactiveElements.push(`[${i}] ${desc}`);
@@ -609,52 +612,64 @@ export async function browseWebsite(
       }
 
       const pageText = await page.locator("body").textContent({ timeout: 5000 }).catch(() => "");
-      const visibleText = (pageText || "").replace(/\s+/g, " ").trim().slice(0, 2000);
+      const visibleText = (pageText || "").replace(/\s+/g, " ").trim().slice(0, 3000);
 
-      const response = await anthropic.messages.create({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 500,
-        messages: [{
-          role: "user",
-          content: `You are a browser automation agent. Complete this task step by step.
-
-TASK: ${task}
-${autofillContext}${paymentContext}
-
-CURRENT PAGE:
+      const userMessage = `CURRENT PAGE (step ${step + 1}/${MAX_STEPS}):
 URL: ${currentUrl}
 Title: ${title}
-Steps completed so far: ${stepSummaries.length > 0 ? stepSummaries.join(" → ") : "none"}
 
-VISIBLE TEXT (first 2000 chars):
+PAGE CONTENT (first 3000 chars):
 ${visibleText}
 
 INTERACTIVE ELEMENTS:
-${interactiveElements.slice(0, 40).join("\n")}
+${interactiveElements.slice(0, 50).join("\n")}`;
 
-Respond with ONLY a JSON object (no markdown):
-{"action": "click|type|navigate|select|scroll|wait|done|fail", "selector": "CSS selector or element index like [3]", "text": "text to type (for type action)", "url": "url to go to (for navigate)", "summary": "what this step does"}
+      const systemPrompt = `You are a browser automation agent completing an online ordering task. You take ONE action per response.
 
-- Use "done" when the task is complete. Include a summary of what was accomplished.
-- Use "fail" if the task cannot be completed. Explain why.
-- For clicking, prefer using the element index like [3] from the list above.
-- For typing into fields, first click the field, then type in the next step.
-- When filling checkout forms, use the user info provided above.
-- Be efficient — skip unnecessary steps.`,
-        }],
+TASK: ${task}
+${autofillInfo}${paymentInfo}
+
+RULES:
+1. Respond with ONLY a JSON object — no markdown, no explanation.
+2. Format: {"action": "click|type|navigate|select|scroll|scroll_up|press_key|wait|done|fail", "selector": "[index]", "text": "for type/press_key", "url": "for navigate", "summary": "brief description"}
+3. Use element index like [3] from the INTERACTIVE ELEMENTS list.
+4. To type into a field, first click it in one step, then type in the next step.
+5. For dropdowns/selects, use "select" with the option text.
+6. Use "press_key" with text like "Enter", "Tab", "Escape" for keyboard actions.
+7. Use "scroll" to scroll down, "scroll_up" to scroll up — useful when the element you need isn't visible.
+8. Handle cookie banners, popups, and modals by dismissing/accepting them.
+9. DO NOT click "Place Order" or "Submit Order" or any final purchase button. Stop BEFORE that and use "done" with a summary of what's in the cart and the total price.
+10. If a page requires login/signup, report "fail" — don't try to create accounts.
+11. Be persistent — if an action fails, try an alternative approach. Scroll to find elements, try different selectors.
+12. For address fields, type the full address. If autocomplete suggestions appear, click the best match.
+13. If you see a price total or order summary, include it in your "done" summary.`;
+
+      if (conversationHistory.length === 0) {
+        conversationHistory.push({ role: "user", content: userMessage });
+      } else {
+        conversationHistory.push({ role: "user", content: userMessage });
+      }
+
+      // Keep conversation history manageable — last 10 exchanges
+      const recentHistory = conversationHistory.slice(-20);
+
+      const response = await anthropic.messages.create({
+        model: "claude-sonnet-4-6",
+        max_tokens: 400,
+        system: systemPrompt,
+        messages: recentHistory,
       });
 
       const actionText = response.content[0].type === "text" ? response.content[0].text : "";
+      conversationHistory.push({ role: "assistant", content: actionText });
+
       let browserAction: BrowserAction;
       try {
         const cleaned = actionText.replace(/```json?\s*/g, "").replace(/```/g, "").trim();
         browserAction = JSON.parse(cleaned);
       } catch {
-        stepSummaries.push("Failed to parse action");
         continue;
       }
-
-      stepSummaries.push(browserAction.summary);
 
       if (browserAction.action === "done") {
         return {
@@ -677,8 +692,8 @@ Respond with ONLY a JSON object (no markdown):
 
       try {
         if (browserAction.action === "navigate" && browserAction.url) {
-          await page.goto(browserAction.url, { waitUntil: "domcontentloaded", timeout: 20000 });
-          await page.waitForTimeout(2000);
+          await page.goto(browserAction.url, { waitUntil: "domcontentloaded", timeout: 25000 });
+          await page.waitForTimeout(3000);
         } else if (browserAction.action === "click") {
           const indexMatch = browserAction.selector?.match(/^\[(\d+)\]$/);
           if (indexMatch && elements[parseInt(indexMatch[1])]) {
@@ -686,7 +701,7 @@ Respond with ONLY a JSON object (no markdown):
           } else if (browserAction.selector) {
             await page.locator(browserAction.selector).first().click({ timeout: 5000 });
           }
-          await page.waitForTimeout(1500);
+          await page.waitForTimeout(2000);
         } else if (browserAction.action === "type" && browserAction.text) {
           const indexMatch = browserAction.selector?.match(/^\[(\d+)\]$/);
           if (indexMatch && elements[parseInt(indexMatch[1])]) {
@@ -698,22 +713,41 @@ Respond with ONLY a JSON object (no markdown):
           }
           await page.waitForTimeout(1000);
         } else if (browserAction.action === "select" && browserAction.selector && browserAction.text) {
-          await page.locator(browserAction.selector).first().selectOption({ label: browserAction.text });
+          const indexMatch = browserAction.selector?.match(/^\[(\d+)\]$/);
+          if (indexMatch && elements[parseInt(indexMatch[1])]) {
+            await elements[parseInt(indexMatch[1])].selectOption({ label: browserAction.text });
+          } else if (browserAction.selector) {
+            await page.locator(browserAction.selector).first().selectOption({ label: browserAction.text });
+          }
           await page.waitForTimeout(1000);
         } else if (browserAction.action === "scroll") {
-          await page.mouse.wheel(0, 500);
+          await page.mouse.wheel(0, 600);
+          await page.waitForTimeout(1500);
+        } else if (browserAction.action === "scroll_up") {
+          await page.mouse.wheel(0, -600);
+          await page.waitForTimeout(1500);
+        } else if (browserAction.action === "press_key" && browserAction.text) {
+          await page.keyboard.press(browserAction.text);
           await page.waitForTimeout(1000);
         } else if (browserAction.action === "wait") {
           await page.waitForTimeout(3000);
         }
       } catch (e) {
-        stepSummaries.push(`Action failed: ${String(e).slice(0, 100)}`);
+        conversationHistory.push({
+          role: "user",
+          content: `ACTION FAILED: ${String(e).slice(0, 200)}. Try a different approach.`,
+        });
+        conversationHistory.push({
+          role: "assistant",
+          content: `{"action": "wait", "summary": "Retrying after error"}`,
+        });
+        await page.waitForTimeout(1000);
       }
     }
 
     return {
       success: false,
-      summary: `Reached step limit. Steps completed: ${stepSummaries.join(" → ")}`,
+      summary: "Reached maximum steps. The order may be partially complete — check the website.",
       currentUrl: page.url(),
       pageTitle: await page.title().catch(() => ""),
       error: "Reached maximum steps without completing the task",
