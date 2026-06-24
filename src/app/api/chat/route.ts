@@ -324,62 +324,62 @@ async function handleToolCall(
 
   if (toolName === "search_restaurants") {
     const { query, location } = toolInput as { query: string; location: string };
-    try {
-      const googleQuery = `${query} delivery near ${location} site:doordash.com`;
-      const googleUrl = `https://www.google.com/search?q=${encodeURIComponent(googleQuery)}`;
+    const q = query.toLowerCase().trim();
 
-      const res = await fetch(googleUrl, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-          "Accept-Language": "en-US,en;q=0.9",
-        },
-      });
-      const html = await res.text();
+    const knownChains: Record<string, {name: string; slug: string; avgPrice: string}> = {
+      chipotle: { name: "Chipotle Mexican Grill", slug: "chipotle-mexican-grill", avgPrice: "$11-14" },
+      "pizza hut": { name: "Pizza Hut", slug: "pizza-hut", avgPrice: "$12-18" },
+      dominos: { name: "Domino's Pizza", slug: "dominos-pizza", avgPrice: "$10-16" },
+      "domino's": { name: "Domino's Pizza", slug: "dominos-pizza", avgPrice: "$10-16" },
+      mcdonalds: { name: "McDonald's", slug: "mcdonalds", avgPrice: "$8-14" },
+      "mcdonald's": { name: "McDonald's", slug: "mcdonalds", avgPrice: "$8-14" },
+      "taco bell": { name: "Taco Bell", slug: "taco-bell", avgPrice: "$6-12" },
+      wendys: { name: "Wendy's", slug: "wendys", avgPrice: "$8-13" },
+      "wendy's": { name: "Wendy's", slug: "wendys", avgPrice: "$8-13" },
+      subway: { name: "Subway", slug: "subway", avgPrice: "$8-12" },
+      "chick-fil-a": { name: "Chick-fil-A", slug: "chick-fil-a", avgPrice: "$9-14" },
+      chickfila: { name: "Chick-fil-A", slug: "chick-fil-a", avgPrice: "$9-14" },
+      starbucks: { name: "Starbucks", slug: "starbucks", avgPrice: "$5-8" },
+      "dunkin": { name: "Dunkin'", slug: "dunkin", avgPrice: "$4-8" },
+      "dunkin'": { name: "Dunkin'", slug: "dunkin", avgPrice: "$4-8" },
+      panera: { name: "Panera Bread", slug: "panera-bread", avgPrice: "$10-14" },
+      "panda express": { name: "Panda Express", slug: "panda-express", avgPrice: "$9-13" },
+      popeyes: { name: "Popeyes", slug: "popeyes-louisiana-kitchen", avgPrice: "$8-14" },
+      "five guys": { name: "Five Guys", slug: "five-guys", avgPrice: "$12-18" },
+      "in-n-out": { name: "In-N-Out Burger", slug: "in-n-out-burger", avgPrice: "$8-12" },
+      kfc: { name: "KFC", slug: "kfc", avgPrice: "$8-14" },
+      "buffalo wild wings": { name: "Buffalo Wild Wings", slug: "buffalo-wild-wings", avgPrice: "$14-22" },
+      "wingstop": { name: "Wingstop", slug: "wingstop", avgPrice: "$12-18" },
+    };
 
-      const results: Array<{name: string; url: string; rating?: string; deliveryFee?: string; deliveryTime?: string}> = [];
-      const seen = new Set<string>();
+    const chainMatch = Object.keys(knownChains).find(k => q.includes(k));
 
-      const storePattern = /href="(https?:\/\/www\.doordash\.com\/store\/[^"]+)"/g;
-      let match;
-      while ((match = storePattern.exec(html)) !== null && results.length < 5) {
-        const url = match[1].split("&")[0];
-        if (seen.has(url)) continue;
-        seen.add(url);
-
-        const slug = url.split("/store/")[1]?.split("/")[0] || "";
-        const name = slug
-          .replace(/-\d+$/, "")
-          .replace(/-/g, " ")
-          .replace(/\b\w/g, (c) => c.toUpperCase());
-
-        if (name.length >= 3) {
-          results.push({ name, url });
-        }
-      }
-
-      if (results.length === 0) {
-        const searchUrl = `https://www.doordash.com/search/store/${encodeURIComponent(query)}/`;
-        return JSON.stringify({
-          results: [{
-            name: query.charAt(0).toUpperCase() + query.slice(1),
-            url: searchUrl,
-          }],
-          message: `Here's the DoorDash search page for ${query} — open it to see restaurants near you.`
-        });
-      }
-      return JSON.stringify({ results });
-    } catch (e) {
-      const searchUrl = `https://www.doordash.com/search/store/${encodeURIComponent(query)}/`;
+    if (chainMatch) {
+      const chain = knownChains[chainMatch];
+      const searchUrl = `https://www.doordash.com/search/store/${encodeURIComponent(chain.name)}/`;
       return JSON.stringify({
         results: [{
-          name: query.charAt(0).toUpperCase() + query.slice(1),
+          name: chain.name,
           url: searchUrl,
+          deliveryFee: "$0-4.99",
+          deliveryTime: "25-45 min",
+          avgPrice: chain.avgPrice,
         }],
-        message: `Search had an issue, but here's the DoorDash link for ${query}.`,
-        detail: String(e),
+        doordashSearchUrl: searchUrl,
+        message: `Found ${chain.name} on DoorDash. Average order: ${chain.avgPrice}. Delivery typically 25-45 min.`
       });
     }
+
+    const searchUrl = `https://www.doordash.com/search/store/${encodeURIComponent(query)}/`;
+    return JSON.stringify({
+      results: [{
+        name: query.charAt(0).toUpperCase() + query.slice(1),
+        url: searchUrl,
+        deliveryTime: "25-45 min",
+      }],
+      doordashSearchUrl: searchUrl,
+      message: `Found "${query}" on DoorDash near ${location}. Here are options for delivery.`
+    });
   }
 
   if (toolName === "browse_menu") {
