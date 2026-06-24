@@ -757,6 +757,7 @@ async function handleToolCall(
         ? `If a credit card is required, use: Card number ${cardDetails.number}, Exp ${String(cardDetails.expMonth).padStart(2, "0")}/${cardDetails.expYear}, CVC ${cardDetails.cvc}. `
         : "";
 
+      console.log("[complete_reservation] Starting browser automation for", restaurantName, "url:", reservationUrl);
       const result = await browseWebsite(
         reservationUrl,
         `Complete a restaurant reservation on this page. Follow these steps EXACTLY:\n` +
@@ -775,9 +776,13 @@ async function handleToolCall(
         `9. Return "done" with: CONFIRMED: [restaurant name] | DATE: [date] | TIME: [time selected] | PARTY: [number] | CONFIRMATION: [any confirmation number shown]\n` +
         `If you cannot complete the reservation (no times available, error, etc.), return: FAILED: [reason]\n` +
         `IMPORTANT: Do NOT stop before clicking the final confirm button. Complete the entire booking.`,
-        { name: user?.name || "", email, phone, address: user?.homeAddress || "" }
+        { name: user?.name || "", email, phone, address: user?.homeAddress || "" },
+        undefined,
+        undefined,
+        { allowFinalSubmit: true }
       );
 
+      console.log("[complete_reservation] Browser result:", JSON.stringify({ success: result.success, summary: result.summary, error: result.error, url: result.currentUrl }));
       if (result.success && result.summary) {
         const confirmed = result.summary.includes("CONFIRMED");
         const timeMatch = result.summary.match(/TIME:\s*(.+?)(?:\s*\||$)/i);

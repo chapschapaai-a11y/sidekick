@@ -555,6 +555,7 @@ export async function browseWebsite(
   autofill?: { name?: string; email?: string; phone?: string; address?: string },
   contextId?: string,
   paymentCard?: { number: string; expMonth: number; expYear: number; cvc: string },
+  options?: { allowFinalSubmit?: boolean },
 ): Promise<BrowseResult> {
   const anthropic = new Anthropic();
   const { browser, page } = await createBrowserSession(contextId);
@@ -654,7 +655,7 @@ RULES:
 6. Use "press_key" with text like "Enter", "Tab", "Escape" for keyboard actions.
 7. Use "scroll" to scroll down, "scroll_up" to scroll up — useful when the element you need isn't visible.
 8. Handle cookie banners, popups, and modals by dismissing/accepting them.
-9. DO NOT click "Place Order" or "Submit Order" or any final purchase button. Stop BEFORE that and use "done" with a summary of what's in the cart and the total price.
+9. ${options?.allowFinalSubmit ? 'You ARE allowed to click final confirm/submit/complete buttons (like "Complete reservation", "Confirm booking", etc.). Click them and report success.' : 'DO NOT click "Place Order" or "Submit Order" or any final purchase button. Stop BEFORE that and use "done" with a summary of what\'s in the cart and the total price.'}
 10. If a page requires login/signup, report "fail" — don't try to create accounts.
 11. Be persistent — if an action fails, try an alternative approach. Scroll to find elements, try different selectors.
 12. For address fields, type the full address. If autocomplete suggestions appear, click the best match.
