@@ -23,6 +23,11 @@ export async function createBrowserSession(contextId?: string) {
   const context = browser.contexts()[0];
   const page = context.pages()[0];
 
+  await page.setExtraHTTPHeaders({
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+  });
+
   return { browser, page, sessionId: session.id };
 }
 
@@ -553,8 +558,17 @@ export async function browseWebsite(
   const { browser, page } = await createBrowserSession(contextId);
 
   try {
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
-    await page.waitForTimeout(3000);
+    try {
+      await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+    } catch {
+      await page.goto(url, { waitUntil: "commit", timeout: 15000 });
+    }
+    await page.waitForTimeout(4000);
+
+    const pageContent = await page.locator("body").textContent({ timeout: 5000 }).catch(() => "");
+    if (!pageContent || pageContent.trim().length < 50) {
+      await page.waitForTimeout(5000);
+    }
 
     const autofillInfo = autofill
       ? `\nUSER INFO (use to fill forms):\n- Name: ${autofill.name || "not provided"}\n- Email: ${autofill.email || "not provided"}\n- Phone: ${autofill.phone || "not provided"}\n- Address: ${autofill.address || "not provided"}`
