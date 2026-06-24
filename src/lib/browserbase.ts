@@ -7,17 +7,21 @@ const bb = new Browserbase({
 });
 
 export async function createBrowserSession(contextId?: string) {
-  const sessionOpts: Record<string, unknown> = {
-    projectId: process.env.BROWSERBASE_PROJECT_ID!,
+  const browserSettings: Record<string, unknown> = {
+    advancedStealth: true,
+    solveCaptchas: true,
+    blockAds: true,
   };
 
   if (contextId) {
-    sessionOpts.browserSettings = {
-      context: { id: contextId, persist: true },
-    };
+    browserSettings.context = { id: contextId, persist: true };
   }
 
-  const session = await bb.sessions.create(sessionOpts);
+  const session = await bb.sessions.create({
+    projectId: process.env.BROWSERBASE_PROJECT_ID!,
+    browserSettings,
+    proxies: true,
+  } as Record<string, unknown>);
 
   const browser = await chromium.connectOverCDP(session.connectUrl!);
   const context = browser.contexts()[0];
