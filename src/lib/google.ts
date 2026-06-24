@@ -53,19 +53,27 @@ export interface CalendarEvent {
 }
 
 export async function fetchTodayEvents(userId: string): Promise<CalendarEvent[]> {
+  return fetchCalendarRange(userId);
+}
+
+export async function fetchCalendarRange(
+  userId: string,
+  startDate?: Date,
+  endDate?: Date,
+): Promise<CalendarEvent[]> {
   const token = await getGoogleToken(userId);
   if (!token) return [];
 
   const now = new Date();
-  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000);
+  const start = startDate || new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const end = endDate || new Date(start.getTime() + 24 * 60 * 60 * 1000);
 
   const params = new URLSearchParams({
-    timeMin: startOfDay.toISOString(),
-    timeMax: endOfDay.toISOString(),
+    timeMin: start.toISOString(),
+    timeMax: end.toISOString(),
     singleEvents: "true",
     orderBy: "startTime",
-    maxResults: "20",
+    maxResults: "50",
   });
 
   const res = await fetch(
@@ -76,7 +84,7 @@ export async function fetchTodayEvents(userId: string): Promise<CalendarEvent[]>
   if (!res.ok) return [];
 
   const data = await res.json();
-  return (data.items || []).map((e: Record<string, unknown>) => ({
+  const googleEvents: CalendarEvent[] = (data.items || []).map((e: Record<string, unknown>) => ({
     id: e.id as string,
     title: (e.summary as string) || "Untitled",
     start: ((e.start as Record<string, string>)?.dateTime || (e.start as Record<string, string>)?.date) as string,
@@ -84,6 +92,29 @@ export async function fetchTodayEvents(userId: string): Promise<CalendarEvent[]>
     location: (e.location as string) || undefined,
     allDay: !!(e.start as Record<string, string>)?.date,
   }));
+
+  // Also fetch ICS subscription events for this range
+  const subs = await prisma.calendarSubscription.findMany({ where: { userId } });
+  if (subs.length === 0) return googleEvents;
+
+  const { fetchICSEvents } = await import("@/lib/ics");
+  const icsResults = await Promise.all(
+    subs.map((s) => fetchICSEvents(s.url).catch(() => []))
+  );
+
+  const icsInRange: CalendarEvent[] = [];
+  for (const events of icsResults) {
+    for (const e of events) {
+      const eventStart = new Date(e.start);
+      if (eventStart >= start && eventStart < end) {
+        icsInRange.push(e);
+      }
+    }
+  }
+
+  return [...googleEvents, ...icsInRange].sort(
+    (a, b) => new Date(a.start).getTime() - new Date(b.start).getTime()
+  );
 }
 
 export interface GmailThread {

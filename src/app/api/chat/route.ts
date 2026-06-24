@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "@/lib/db";
 import { getSessionUserId } from "@/lib/auth";
-import { fetchTodayEvents, fetchRecentEmails, CalendarEvent, GmailThread } from "@/lib/google";
+import { fetchTodayEvents, fetchCalendarRange, fetchRecentEmails, CalendarEvent, GmailThread } from "@/lib/google";
 async function getBrowserbase() {
   return await import("@/lib/browserbase");
 }
@@ -171,6 +171,25 @@ const SIDEKICK_TOOLS: Anthropic.Tool[] = [
         },
       },
       required: ["pickup", "dropoff"],
+    },
+  },
+  {
+    name: "check_calendar",
+    description:
+      "Look up calendar events for any date or date range. Use whenever the user asks about their schedule — 'what do I have Tuesday', 'am I free this weekend', 'next Thursday', 'this week', 'July 4th', etc. Returns all events from Google Calendar and any imported calendars (iCloud, Outlook, etc.).",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        startDate: {
+          type: "string",
+          description: "Start date in YYYY-MM-DD format (e.g. '2026-07-01')",
+        },
+        endDate: {
+          type: "string",
+          description: "End date in YYYY-MM-DD format (e.g. '2026-07-02'). For a single day, set this to the day after startDate.",
+        },
+      },
+      required: ["startDate", "endDate"],
     },
   },
 ];
@@ -361,6 +380,37 @@ async function handleToolCall(
     });
   }
 
+  if (toolName === "check_calendar") {
+    const { startDate, endDate } = toolInput as { startDate: string; endDate: string };
+    try {
+      const start = new Date(startDate + "T00:00:00");
+      const end = new Date(endDate + "T00:00:00");
+      const events = await fetchCalendarRange(userId, start, end);
+
+      if (events.length === 0) {
+        const days = Math.round((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000));
+        return JSON.stringify({
+          events: [],
+          message: days === 1
+            ? `Nothing on the calendar for ${start.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}.`
+            : `No events from ${start.toLocaleDateString("en-US", { month: "short", day: "numeric" })} to ${end.toLocaleDateString("en-US", { month: "short", day: "numeric" })}.`,
+        });
+      }
+
+      return JSON.stringify({
+        events: events.map((e) => ({
+          title: e.title,
+          start: e.start,
+          end: e.end,
+          location: e.location || null,
+          allDay: e.allDay,
+        })),
+      });
+    } catch (e) {
+      return JSON.stringify({ error: "Calendar lookup failed", detail: String(e) });
+    }
+  }
+
   return JSON.stringify({ error: "Unknown tool" });
 }
 
@@ -411,7 +461,7 @@ export async function POST(req: NextRequest) {
       take: 10,
     }),
     fetchWeather(user.latitude, user.longitude, user.location).catch(() => null),
-    fetchTodayEvents(userId).catch(() => []),
+    fetchCalendarRange(userId, undefined, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)).catch(() => []),
     fetchRecentEmails(userId).catch(() => []),
     prisma.wallet.findUnique({ where: { userId } }),
   ]);
@@ -636,12 +686,13 @@ ${contextParts.length > 0 ? contextParts.join("\n") : "No profile details yet."}
 ${weather ? `\nWEATHER RIGHT NOW (${weather.location}):
 ${weather.temperature}°F, ${weather.condition}. High ${weather.high}°, low ${weather.low}°. Feels like ${weather.feelsLike}°.${weather.uvIndex >= 6 ? ` UV index is high (${weather.uvIndex}) — recommend sunscreen.` : ""}
 ${weather.forecast.length > 1 ? `\nFORECAST:\n${weather.forecast.map((f) => `- ${f.day}: ${f.condition}, high ${f.high}°, low ${f.low}°${f.rainChance > 20 ? ` (${f.rainChance}% rain)` : ""}`).join("\n")}` : ""}` : ""}
-${calendarEvents.length > 0 ? `\nTODAY'S SCHEDULE:\n${calendarEvents.map((e) => {
-    if (e.allDay) return `- ${e.title} (all day)${e.location ? ` @ ${e.location}` : ""}`;
+${calendarEvents.length > 0 ? `\nUPCOMING SCHEDULE (next 7 days):\n${calendarEvents.map((e) => {
+    const dayLabel = new Date(e.start).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+    if (e.allDay) return `- ${dayLabel}: ${e.title} (all day)${e.location ? ` @ ${e.location}` : ""}`;
     const startTime = new Date(e.start).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
     const endTime = new Date(e.end).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-    return `- ${startTime}–${endTime}: ${e.title}${e.location ? ` @ ${e.location}` : ""}`;
-  }).join("\n")}` : "\nNo calendar connected yet — or no events today."}
+    return `- ${dayLabel} ${startTime}–${endTime}: ${e.title}${e.location ? ` @ ${e.location}` : ""}`;
+  }).join("\n")}` : "\nNo calendar connected yet — or no events this week."}
 ${emails.length > 0 ? `\nRECENT EMAILS:\n${emails.map((e) => `- ${e.unread ? "🔴 " : ""}${e.subject} — from ${e.from}${e.unread ? " (UNREAD)" : ""}`).join("\n")}` : ""}
 ${taskContext}${doneContext}
 
@@ -686,6 +737,12 @@ What you can do:
 HOME ADDRESS:
 ${user.homeAddress ? `${name}'s home address is **${user.homeAddress}**. When they say "ship this home" or "deliver to my place" or "send it to my house", use this address automatically — no need to ask.` : `${name} hasn't saved a home address yet. If they mention shipping something home or you need a delivery address, ask for their address and use save_address to save it so you remember next time.`}
 
+CALENDAR — you have full access to ${name}'s calendar:
+- The upcoming 7 days are already loaded above. For anything within this week, just answer from that data.
+- For ANY other date — next week, next month, a specific date — use the check_calendar tool. It pulls from Google Calendar AND any imported calendars (iCloud, Outlook, Yahoo, etc.).
+- When ${name} says "next Tuesday", "July 4th", "this weekend", "am I free tomorrow afternoon", etc. — look it up and give a real answer.
+- Today is ${new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}. Use this to calculate the correct dates for relative references like "next Tuesday" or "this Friday".
+
 HOW TO RESPOND:
 - Match the question's depth. Quick question = quick answer. Deep question = thorough, brilliant answer.
 - Always be proactive — after answering, suggest a next step or related insight
@@ -693,6 +750,7 @@ HOW TO RESPOND:
 - Today is ${new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}. It's currently ${timeOfDay}.
 - NEVER say "I can't", "I don't have access to", "as an AI", or "I'm not able to" — you're the smartest person in the room, act like it
 - If asked about weather, USE THE FORECAST DATA ABOVE — you already have today through the full week. Answer confidently.
+- If asked about the calendar or schedule, USE THE SCHEDULE DATA ABOVE for this week, or call check_calendar for any other date. Answer confidently.
 - If asked ANY knowledge question — history, science, business, health, cooking, relationships, investing, law, medicine, fashion, sports, literally anything — just answer it. You know this stuff. Be specific, cite facts, give real actionable advice. Don't hedge or give vague non-answers.
 - If ${name} asks for an opinion, give one. Don't be wishy-washy. Have a point of view.
 - Format with markdown: **bold** for emphasis, line breaks for readability, bullet points for lists
