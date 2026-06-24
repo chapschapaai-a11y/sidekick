@@ -174,6 +174,54 @@ const SIDEKICK_TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: "browse_website",
+    description:
+      "Open any website in a real browser, navigate pages, click buttons, fill forms, and extract information. Use this for ANY online task: ordering food from restaurant websites (Chipotle, Pizza Hut, Dominos, etc.), shopping on any store, booking services, checking prices, filling out forms. The browser has a persistent session so saved logins and payment methods carry over between uses. You can auto-fill the user's name, email, phone, and address into checkout forms.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        url: {
+          type: "string",
+          description: "The website URL to open (e.g. 'https://www.chipotle.com', 'https://www.pizzahut.com')",
+        },
+        task: {
+          type: "string",
+          description: "Detailed description of what to do on the site. Be specific: 'Go to chipotle.com, start an order for delivery to 123 Main St, add a chicken burrito bowl with white rice, pinto beans, fresh tomato salsa, and cheese. Go to checkout.' Include the user's address, items, and any customizations.",
+        },
+        autofill: {
+          type: "object",
+          description: "User info to auto-fill into forms during checkout",
+          properties: {
+            name: { type: "string" },
+            email: { type: "string" },
+            phone: { type: "string" },
+            address: { type: "string" },
+          },
+        },
+      },
+      required: ["url", "task"],
+    },
+  },
+  {
+    name: "save_profile",
+    description:
+      "Save the user's contact info (phone number, email) for auto-filling checkout forms. Use when the user shares their phone number or email.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        phone: {
+          type: "string",
+          description: "Phone number (e.g. '956-907-5482')",
+        },
+        email: {
+          type: "string",
+          description: "Email address",
+        },
+      },
+      required: [],
+    },
+  },
+  {
     name: "check_calendar",
     description:
       "Look up calendar events for any date or date range. Use whenever the user asks about their schedule — 'what do I have Tuesday', 'am I free this weekend', 'next Thursday', 'this week', 'July 4th', etc. Returns all events from Google Calendar and any imported calendars (iCloud, Outlook, etc.).",
@@ -378,6 +426,41 @@ async function handleToolCall(
         description: t.description,
       })),
     });
+  }
+
+  if (toolName === "browse_website") {
+    const { url, task, autofill } = toolInput as {
+      url: string;
+      task: string;
+      autofill?: { name?: string; email?: string; phone?: string; address?: string };
+    };
+    try {
+      const { browseWebsite } = await getBrowserbase();
+      const userInfo = autofill || {};
+      const user = await prisma.user.findUnique({ where: { id: userId } });
+      if (user) {
+        if (!userInfo.name && user.name) userInfo.name = user.name;
+        if (!userInfo.email && user.email) userInfo.email = user.email;
+        if (!userInfo.phone && user.phone) userInfo.phone = user.phone;
+        if (!userInfo.address && user.homeAddress) userInfo.address = user.homeAddress;
+      }
+      const result = await browseWebsite(url, task, userInfo);
+      return JSON.stringify(result);
+    } catch (e) {
+      return JSON.stringify({ success: false, error: "Browser automation failed", detail: String(e) });
+    }
+  }
+
+  if (toolName === "save_profile") {
+    const { phone, email } = toolInput as { phone?: string; email?: string };
+    const updateData: Record<string, string> = {};
+    if (phone) updateData.phone = phone;
+    if (email) updateData.email = email;
+    if (Object.keys(updateData).length === 0) {
+      return JSON.stringify({ error: "No info provided to save" });
+    }
+    await prisma.user.update({ where: { id: userId }, data: updateData });
+    return JSON.stringify({ success: true, saved: updateData });
   }
 
   if (toolName === "check_calendar") {
@@ -602,6 +685,8 @@ async function fetchWeather(
 
 interface UserProfile {
   name: string | null;
+  email: string | null;
+  phone: string | null;
   sidekickName: string;
   formality: number;
   humor: number;
@@ -610,6 +695,8 @@ interface UserProfile {
   detail: number;
   location: string | null;
   homeAddress: string | null;
+  latitude: number | null;
+  longitude: number | null;
   backgrounds: string[];
   needs: string[];
   wakeTime: string | null;
@@ -667,6 +754,8 @@ function buildSystemPrompt(
   const contextParts = [];
   if (user.location) contextParts.push(`Location: ${user.location}`);
   if (user.homeAddress) contextParts.push(`Home address: ${user.homeAddress}`);
+  if (user.email) contextParts.push(`Email: ${user.email}`);
+  if (user.phone) contextParts.push(`Phone: ${user.phone}`);
   if (user.age) contextParts.push(`Age: ${user.age}`);
   if (user.backgrounds.length > 0) contextParts.push(`Background: ${user.backgrounds.join(", ")}`);
   if (user.diet.length > 0) contextParts.push(`Diet: ${user.diet.join(", ")}`);
@@ -729,13 +818,27 @@ When ${name} asks for a ride, car, or needs to get somewhere:
 6. If their balance is too low, tell them exactly how much to add
 7. Keep it seamless — don't tell them to open another app, tap a link, or do anything else. You handle it all. The experience should feel like texting a personal driver.
 
+GENERAL BROWSING — you can use browse_website to do ANYTHING on ANY website:
+When ${name} asks you to order from a specific restaurant (Chipotle, Pizza Hut, Dominos, etc.) or do anything online:
+1. Use browse_website with the restaurant/store URL and a detailed task description
+2. Include their full order details in the task (items, customizations, delivery address)
+3. The browser will auto-fill ${name}'s name, email, phone, and address into checkout forms
+4. Report back what happened — the total, what's in the cart, etc.
+5. If the site needs a login, tell ${name} and offer to open it for them to log in quickly
+6. The browser remembers logins between sessions — they only need to log in once per site
+
 What you can do:
+- **ANY website** — browse_website can navigate, click, fill forms, and place orders on any site. Use this for restaurant websites (Chipotle, Pizza Hut, Dominos, Panera, etc.), any store, any service.
 - **Books, electronics, household items, anything on Amazon** — search_product finds real prices, place_order adds to cart
 - **Food from DoorDash** — search_restaurants finds nearby spots, browse_menu shows real menus, place_food_order adds to cart
 - **Rides** — search_rides gets real prices, spend_wallet pays for it — fully handled, no other apps needed
 
 HOME ADDRESS:
-${user.homeAddress ? `${name}'s home address is **${user.homeAddress}**. When they say "ship this home" or "deliver to my place" or "send it to my house", use this address automatically — no need to ask.` : `${name} hasn't saved a home address yet. If they mention shipping something home or you need a delivery address, ask for their address and use save_address to save it so you remember next time.`}
+SAVED INFO FOR AUTO-FILL:
+${user.homeAddress ? `Address: ${user.homeAddress}` : "No address saved yet — ask for it and use save_address."}
+${user.email ? `Email: ${user.email}` : "No email saved."}
+${user.phone ? `Phone: ${user.phone}` : "No phone saved — if needed for checkout, ask and use save_profile."}
+When ${name} says "ship this home", "deliver to my place", or "order to my house" — use their address automatically. When checking out on any site, auto-fill all available info (name, email, phone, address) without asking.
 
 CALENDAR — you have full access to ${name}'s calendar:
 - The upcoming 7 days are already loaded above. For anything within this week, just answer from that data.

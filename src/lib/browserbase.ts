@@ -1,5 +1,6 @@
 import Browserbase from "@browserbasehq/sdk";
 import { chromium } from "playwright-core";
+import Anthropic from "@anthropic-ai/sdk";
 
 const bb = new Browserbase({
   apiKey: process.env.BROWSERBASE_API_KEY!,
@@ -520,6 +521,198 @@ export async function searchLyftRides(pickup: string, dropoff: string): Promise<
     const deepLink = `https://ride.lyft.com/?pickup[address]=${encodeURIComponent(pickup)}&destination[address]=${encodeURIComponent(dropoff)}`;
 
     return { pickup, dropoff, options, deepLink };
+  } finally {
+    await browser.close();
+  }
+}
+
+export interface BrowseResult {
+  success: boolean;
+  summary: string;
+  currentUrl: string;
+  pageTitle: string;
+  error?: string;
+}
+
+interface BrowserAction {
+  action: "click" | "type" | "navigate" | "select" | "scroll" | "wait" | "done" | "fail";
+  selector?: string;
+  text?: string;
+  url?: string;
+  summary: string;
+}
+
+export async function browseWebsite(
+  url: string,
+  task: string,
+  autofill?: { name?: string; email?: string; phone?: string; address?: string },
+  contextId?: string,
+): Promise<BrowseResult> {
+  const anthropic = new Anthropic();
+  const { browser, page } = await createBrowserSession(contextId);
+
+  try {
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await page.waitForTimeout(2000);
+
+    const autofillContext = autofill
+      ? `\nUser info for auto-filling forms:\n- Name: ${autofill.name || "not provided"}\n- Email: ${autofill.email || "not provided"}\n- Phone: ${autofill.phone || "not provided"}\n- Address: ${autofill.address || "not provided"}`
+      : "";
+
+    const stepSummaries: string[] = [];
+
+    for (let step = 0; step < 15; step++) {
+      const title = await page.title().catch(() => "");
+      const currentUrl = page.url();
+
+      const interactiveElements: string[] = [];
+      const elements = await page.locator("a, button, input, select, textarea, [role='button'], [role='link'], [role='menuitem'], [role='tab']").all();
+
+      for (let i = 0; i < Math.min(elements.length, 60); i++) {
+        try {
+          const el = elements[i];
+          const visible = await el.isVisible().catch(() => false);
+          if (!visible) continue;
+
+          const tag = await el.evaluate((e) => e.tagName.toLowerCase()).catch(() => "");
+          const text = await el.textContent({ timeout: 500 }).catch(() => "");
+          const placeholder = await el.getAttribute("placeholder").catch(() => "");
+          const ariaLabel = await el.getAttribute("aria-label").catch(() => "");
+          const type = await el.getAttribute("type").catch(() => "");
+          const href = await el.getAttribute("href").catch(() => "");
+          const name = await el.getAttribute("name").catch(() => "");
+          const id = await el.getAttribute("id").catch(() => "");
+          const value = await el.inputValue().catch(() => "");
+
+          const label = (text || "").trim().slice(0, 80);
+          const desc = [
+            tag,
+            type ? `type=${type}` : "",
+            id ? `id="${id}"` : "",
+            name ? `name="${name}"` : "",
+            placeholder ? `placeholder="${placeholder}"` : "",
+            ariaLabel ? `aria-label="${ariaLabel}"` : "",
+            href ? `href="${href.slice(0, 60)}"` : "",
+            label ? `"${label}"` : "",
+            value ? `value="${value.slice(0, 40)}"` : "",
+          ].filter(Boolean).join(" ");
+
+          interactiveElements.push(`[${i}] ${desc}`);
+        } catch {
+          continue;
+        }
+      }
+
+      const pageText = await page.locator("body").textContent({ timeout: 5000 }).catch(() => "");
+      const visibleText = (pageText || "").replace(/\s+/g, " ").trim().slice(0, 2000);
+
+      const response = await anthropic.messages.create({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 500,
+        messages: [{
+          role: "user",
+          content: `You are a browser automation agent. Complete this task step by step.
+
+TASK: ${task}
+${autofillContext}
+
+CURRENT PAGE:
+URL: ${currentUrl}
+Title: ${title}
+Steps completed so far: ${stepSummaries.length > 0 ? stepSummaries.join(" → ") : "none"}
+
+VISIBLE TEXT (first 2000 chars):
+${visibleText}
+
+INTERACTIVE ELEMENTS:
+${interactiveElements.slice(0, 40).join("\n")}
+
+Respond with ONLY a JSON object (no markdown):
+{"action": "click|type|navigate|select|scroll|wait|done|fail", "selector": "CSS selector or element index like [3]", "text": "text to type (for type action)", "url": "url to go to (for navigate)", "summary": "what this step does"}
+
+- Use "done" when the task is complete. Include a summary of what was accomplished.
+- Use "fail" if the task cannot be completed. Explain why.
+- For clicking, prefer using the element index like [3] from the list above.
+- For typing into fields, first click the field, then type in the next step.
+- When filling checkout forms, use the user info provided above.
+- Be efficient — skip unnecessary steps.`,
+        }],
+      });
+
+      const actionText = response.content[0].type === "text" ? response.content[0].text : "";
+      let browserAction: BrowserAction;
+      try {
+        const cleaned = actionText.replace(/```json?\s*/g, "").replace(/```/g, "").trim();
+        browserAction = JSON.parse(cleaned);
+      } catch {
+        stepSummaries.push("Failed to parse action");
+        continue;
+      }
+
+      stepSummaries.push(browserAction.summary);
+
+      if (browserAction.action === "done") {
+        return {
+          success: true,
+          summary: browserAction.summary,
+          currentUrl: page.url(),
+          pageTitle: await page.title().catch(() => ""),
+        };
+      }
+
+      if (browserAction.action === "fail") {
+        return {
+          success: false,
+          summary: browserAction.summary,
+          currentUrl: page.url(),
+          pageTitle: await page.title().catch(() => ""),
+          error: browserAction.summary,
+        };
+      }
+
+      try {
+        if (browserAction.action === "navigate" && browserAction.url) {
+          await page.goto(browserAction.url, { waitUntil: "domcontentloaded", timeout: 20000 });
+          await page.waitForTimeout(2000);
+        } else if (browserAction.action === "click") {
+          const indexMatch = browserAction.selector?.match(/^\[(\d+)\]$/);
+          if (indexMatch && elements[parseInt(indexMatch[1])]) {
+            await elements[parseInt(indexMatch[1])].click({ timeout: 5000 });
+          } else if (browserAction.selector) {
+            await page.locator(browserAction.selector).first().click({ timeout: 5000 });
+          }
+          await page.waitForTimeout(1500);
+        } else if (browserAction.action === "type" && browserAction.text) {
+          const indexMatch = browserAction.selector?.match(/^\[(\d+)\]$/);
+          if (indexMatch && elements[parseInt(indexMatch[1])]) {
+            await elements[parseInt(indexMatch[1])].fill(browserAction.text);
+          } else if (browserAction.selector) {
+            await page.locator(browserAction.selector).first().fill(browserAction.text);
+          } else {
+            await page.keyboard.type(browserAction.text);
+          }
+          await page.waitForTimeout(1000);
+        } else if (browserAction.action === "select" && browserAction.selector && browserAction.text) {
+          await page.locator(browserAction.selector).first().selectOption({ label: browserAction.text });
+          await page.waitForTimeout(1000);
+        } else if (browserAction.action === "scroll") {
+          await page.mouse.wheel(0, 500);
+          await page.waitForTimeout(1000);
+        } else if (browserAction.action === "wait") {
+          await page.waitForTimeout(3000);
+        }
+      } catch (e) {
+        stepSummaries.push(`Action failed: ${String(e).slice(0, 100)}`);
+      }
+    }
+
+    return {
+      success: false,
+      summary: `Reached step limit. Steps completed: ${stepSummaries.join(" → ")}`,
+      currentUrl: page.url(),
+      pageTitle: await page.title().catch(() => ""),
+      error: "Reached maximum steps without completing the task",
+    };
   } finally {
     await browser.close();
   }
