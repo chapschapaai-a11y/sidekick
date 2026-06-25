@@ -1,10 +1,18 @@
 import type { NextConfig } from "next";
+import { resolve } from "path";
 
 const nextConfig: NextConfig = {
-  serverExternalPackages: ["playwright-core"],
-  outputFileTracingIncludes: {
-    "/api/chat": ["./node_modules/playwright-core/**/*"],
-    "/api/test-browser": ["./node_modules/playwright-core/**/*"],
+  transpilePackages: ["playwright-core"],
+  webpack: (config, { isServer }) => {
+    if (isServer) {
+      const playwrightPath = resolve("node_modules/playwright-core");
+      config.resolve = config.resolve || {};
+      config.resolve.alias = {
+        ...config.resolve.alias,
+        "playwright-core": playwrightPath,
+      };
+    }
+    return config;
   },
 };
 
