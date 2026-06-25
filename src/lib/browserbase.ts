@@ -590,19 +590,44 @@ export async function browseWebsite(
         if (await searchInput.isVisible({ timeout: 5000 }).catch(() => false)) {
           await searchInput.click();
           await page.waitForTimeout(500);
-          await searchInput.fill(options.openTableSearch);
+          // Use keyboard.type instead of fill to trigger autocomplete events
+          await page.keyboard.type(options.openTableSearch, { delay: 50 });
           console.error("[BROWSE:3e] Typed search query, waiting for suggestions...");
-          await page.waitForTimeout(3000);
+          await page.waitForTimeout(4000);
 
-          const suggestion = page.locator('[class*="autocomplete"] a, [class*="Autocomplete"] a, [data-test*="autocomplete"] a, ul[role="listbox"] li a, [class*="suggestion"] a, [class*="result"] a[href*="/r/"]').first();
-          if (await suggestion.isVisible({ timeout: 5000 }).catch(() => false)) {
-            await suggestion.click();
-            console.error("[BROWSE:3f] Clicked restaurant suggestion");
-            await page.waitForTimeout(4000);
-          } else {
-            await page.keyboard.press("Enter");
-            console.error("[BROWSE:3f] No suggestion found, pressed Enter");
-            await page.waitForTimeout(4000);
+          // Try multiple selector strategies for OpenTable's autocomplete dropdown
+          const suggestionSelectors = [
+            '[data-test*="restaurant"] a',
+            '[data-test*="autocomplete"] a',
+            'a[href*="/r/"]',
+            '[role="listbox"] [role="option"]',
+            '[class*="SearchSuggestion"] a',
+            '[class*="autocomplete"] [role="option"]',
+            '[class*="suggestion"]',
+            'li a[href*="/r/"]',
+          ];
+
+          let clicked = false;
+          for (const sel of suggestionSelectors) {
+            const suggestion = page.locator(sel).first();
+            if (await suggestion.isVisible({ timeout: 2000 }).catch(() => false)) {
+              await suggestion.click();
+              console.error("[BROWSE:3f] Clicked suggestion with selector:", sel);
+              clicked = true;
+              await page.waitForTimeout(4000);
+              break;
+            }
+          }
+
+          if (!clicked) {
+            // Log what's visible for debugging, then let the AI agent handle the search
+            const dropdownHTML = await page.locator('#home-autocomplete-input').evaluate((el) => {
+              const parent = el.closest('[class*="autocomplete"], [class*="search"], form') || el.parentElement;
+              return parent?.innerHTML?.slice(0, 500) || "no parent found";
+            }).catch(() => "eval failed");
+            console.error("[BROWSE:3f] No suggestion matched. Nearby HTML:", dropdownHTML);
+            // Don't press Enter (it navigates to a blocked URL) — leave the AI agent to handle it
+            console.error("[BROWSE:3g] Leaving search text in place for AI agent to pick up");
           }
         }
       } else {
