@@ -117,6 +117,42 @@ export async function fetchCalendarRange(
   );
 }
 
+export async function createCalendarEvent(
+  userId: string,
+  title: string,
+  startDateTime: string,
+  endDateTime: string,
+  location?: string,
+  description?: string,
+): Promise<{ id: string; htmlLink: string } | null> {
+  const token = await getGoogleToken(userId);
+  if (!token) return null;
+
+  const event: Record<string, unknown> = {
+    summary: title,
+    start: { dateTime: startDateTime, timeZone: "America/New_York" },
+    end: { dateTime: endDateTime, timeZone: "America/New_York" },
+  };
+  if (location) event.location = location;
+  if (description) event.description = description;
+
+  const res = await fetch(
+    "https://www.googleapis.com/calendar/v3/calendars/primary/events",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(event),
+    },
+  );
+
+  if (!res.ok) return null;
+  const data = await res.json();
+  return { id: data.id, htmlLink: data.htmlLink };
+}
+
 export interface GmailThread {
   subject: string;
   from: string;
