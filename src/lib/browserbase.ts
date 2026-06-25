@@ -607,27 +607,50 @@ export async function browseWebsite(
             'li a[href*="/r/"]',
           ];
 
+          let restaurantHref: string | null = null;
           let clicked = false;
           for (const sel of suggestionSelectors) {
             const suggestion = page.locator(sel).first();
             if (await suggestion.isVisible({ timeout: 2000 }).catch(() => false)) {
+              // Extract the href before clicking — we may need it for a retry
+              restaurantHref = await suggestion.getAttribute("href").catch(() => null);
               await suggestion.click();
-              console.error("[BROWSE:3f] Clicked suggestion with selector:", sel);
+              console.error("[BROWSE:3f] Clicked suggestion with selector:", sel, "href:", restaurantHref);
               clicked = true;
-              await page.waitForTimeout(4000);
+              await page.waitForTimeout(5000);
               break;
             }
           }
 
+          // Check if we landed on "Access Denied" after clicking
+          const postClickTitle = await page.title().catch(() => "");
+          if (postClickTitle.includes("Access Denied") || postClickTitle.includes("Denied")) {
+            console.error("[BROWSE:3g] Access Denied after click. Trying Google referrer approach...");
+            // Navigate via Google as referrer — Akamai often whitelists Google
+            const slug = restaurantHref || `/r/${options.openTableSearch.split(" ")[0].toLowerCase()}`;
+            const fullUrl = slug.startsWith("http") ? slug : `https://www.opentable.com${slug}`;
+            await page.goto(`https://www.google.com/search?q=${encodeURIComponent(options.openTableSearch + " opentable")}`, {
+              waitUntil: "domcontentloaded",
+              timeout: 15000,
+            });
+            await page.waitForTimeout(2000);
+            // Click the OpenTable result from Google
+            const googleResult = page.locator('a[href*="opentable.com/r/"]').first();
+            if (await googleResult.isVisible({ timeout: 5000 }).catch(() => false)) {
+              await googleResult.click();
+              console.error("[BROWSE:3h] Clicked OpenTable link from Google search");
+              await page.waitForTimeout(5000);
+            } else {
+              // Direct navigate with referrer
+              await page.setExtraHTTPHeaders({ "Referer": "https://www.google.com/" });
+              await page.goto(fullUrl, { waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => {});
+              console.error("[BROWSE:3h] Direct navigate with Google referer to:", fullUrl);
+              await page.waitForTimeout(3000);
+            }
+          }
+
           if (!clicked) {
-            // Log what's visible for debugging, then let the AI agent handle the search
-            const dropdownHTML = await page.locator('#home-autocomplete-input').evaluate((el) => {
-              const parent = el.closest('[class*="autocomplete"], [class*="search"], form') || el.parentElement;
-              return parent?.innerHTML?.slice(0, 500) || "no parent found";
-            }).catch(() => "eval failed");
-            console.error("[BROWSE:3f] No suggestion matched. Nearby HTML:", dropdownHTML);
-            // Don't press Enter (it navigates to a blocked URL) — leave the AI agent to handle it
-            console.error("[BROWSE:3g] Leaving search text in place for AI agent to pick up");
+            console.error("[BROWSE:3f] No suggestion matched, leaving for AI agent");
           }
         }
       } else {
