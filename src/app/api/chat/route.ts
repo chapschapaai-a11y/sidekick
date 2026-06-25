@@ -761,22 +761,36 @@ async function handleToolCall(
         : "";
 
       console.error("[RESERVATION:4] Starting browseWebsite for", restaurantName);
+
+      const isOpenTable = reservationUrl.includes("opentable.com");
+      const startUrl = isOpenTable ? "https://www.opentable.com" : reservationUrl;
+      const dateObj = toolInput && (toolInput as Record<string, unknown>).date ? new Date((toolInput as Record<string, unknown>).date + "T12:00:00") : new Date();
+      const dateFormatted = dateObj.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+
+      const openTableSearchSteps = isOpenTable
+        ? `1. You are on OpenTable's homepage. First, dismiss any cookie consent banner by clicking "Accept" or similar.\n` +
+          `2. Find the search input (id="home-autocomplete-input" or placeholder="Location, Restaurant, or Cuisine") and type "${restaurantName}".\n` +
+          `3. Wait for autocomplete suggestions to appear. Click on the suggestion that matches "${restaurantName}" (the restaurant name, NOT a time or date).\n` +
+          `4. You should now be on the restaurant's page. Set the party size to ${partySize} and the date to ${dateFormatted}.\n` +
+          `5. Look for available time slots near ${time}. Click on the time slot closest to ${time}. If ${time} is not available, pick the nearest available time.\n`
+        : `1. The page should show ${restaurantName} with ${partySize} people.\n` +
+          `2. Look for available time slots near ${time}. Click on the time slot closest to ${time}.\n`;
+
       const result = await browseWebsite(
-        reservationUrl,
-        `Complete a restaurant reservation on this page. Follow these steps EXACTLY:\n` +
-        `1. The page should show ${restaurantName} on OpenTable with ${partySize} people and the time pre-selected.\n` +
-        `2. Look for available time slots near ${time}. Click on the time slot closest to ${time}. If ${time} is not available, pick the nearest available time and note what you selected.\n` +
-        `3. ${seatingInstruction}If there is a seating preference dropdown or option and no preference was specified, leave it as the default.\n` +
-        `4. You should reach a form asking for diner details. Fill in:\n` +
+        startUrl,
+        `Complete a restaurant reservation. Follow these steps EXACTLY:\n` +
+        openTableSearchSteps +
+        `6. ${seatingInstruction}If there is a seating preference dropdown or option and no preference was specified, leave it as the default.\n` +
+        `7. You should reach a form asking for diner details. Fill in:\n` +
         `   - First name: ${firstName}\n` +
         `   - Last name: ${lastName}\n` +
         `   - Email: ${email}\n` +
         `   - Phone: ${phone}\n` +
-        `5. ${cardInstruction}\n` +
-        `6. If there are any special requests or notes fields, leave them empty.\n` +
-        `7. Review the reservation details, then click the final "Complete reservation" or "Confirm" button.\n` +
-        `8. After clicking confirm, wait for the confirmation page to load.\n` +
-        `9. Return "done" with: CONFIRMED: [restaurant name] | DATE: [date] | TIME: [time selected] | PARTY: [number] | CONFIRMATION: [any confirmation number shown]\n` +
+        `8. ${cardInstruction}\n` +
+        `9. If there are any special requests or notes fields, leave them empty.\n` +
+        `10. Review the reservation details, then click the final "Complete reservation" or "Confirm" button.\n` +
+        `11. After clicking confirm, wait for the confirmation page to load.\n` +
+        `12. Return "done" with: CONFIRMED: [restaurant name] | DATE: [date] | TIME: [time selected] | PARTY: [number] | CONFIRMATION: [any confirmation number shown]\n` +
         `If you cannot complete the reservation (no times available, error, etc.), return: FAILED: [reason]\n` +
         `IMPORTANT: Do NOT stop before clicking the final confirm button. Complete the entire booking.`,
         { name: user?.name || "", email, phone, address: user?.homeAddress || "" },
