@@ -558,18 +558,25 @@ export async function browseWebsite(
   options?: { allowFinalSubmit?: boolean },
 ): Promise<BrowseResult> {
   const anthropic = new Anthropic();
-  const { browser, page } = await createBrowserSession(contextId);
+  console.error("[BROWSE:1] Creating browser session...");
+  const { browser, page, sessionId } = await createBrowserSession(contextId);
+  console.error("[BROWSE:2] Session created:", sessionId);
 
   try {
     try {
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
-    } catch {
+      console.error("[BROWSE:3] Page loaded (domcontentloaded):", url);
+    } catch (navErr) {
+      console.error("[BROWSE:3] domcontentloaded failed, trying commit:", String(navErr).slice(0, 100));
       await page.goto(url, { waitUntil: "commit", timeout: 15000 });
+      console.error("[BROWSE:3b] Page loaded (commit)");
     }
     await page.waitForTimeout(4000);
 
     const pageContent = await page.locator("body").textContent({ timeout: 5000 }).catch(() => "");
+    console.error("[BROWSE:4] Page content length:", pageContent?.trim().length || 0, "title:", await page.title().catch(() => "?"));
     if (!pageContent || pageContent.trim().length < 50) {
+      console.error("[BROWSE:4b] Short content, waiting 5s more...");
       await page.waitForTimeout(5000);
     }
 
@@ -685,8 +692,11 @@ RULES:
         const cleaned = actionText.replace(/```json?\s*/g, "").replace(/```/g, "").trim();
         browserAction = JSON.parse(cleaned);
       } catch {
+        console.error(`[BROWSE:STEP:${step}] Failed to parse AI response:`, actionText.slice(0, 200));
         continue;
       }
+
+      console.error(`[BROWSE:STEP:${step}] Action: ${browserAction.action} | ${browserAction.summary || ""} | selector: ${browserAction.selector || "none"}`);
 
       if (browserAction.action === "done") {
         return {

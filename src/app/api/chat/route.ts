@@ -730,8 +730,11 @@ async function handleToolCall(
       seatingPreference?: string;
     };
     try {
+      console.error("[RESERVATION:1] complete_reservation called", JSON.stringify({ restaurantName, reservationUrl, time, partySize, seatingPreference }));
       const { browseWebsite } = await getBrowserbase();
+      console.error("[RESERVATION:2] browserbase module imported");
       const user = await prisma.user.findUnique({ where: { id: userId } });
+      console.error("[RESERVATION:3] user loaded", JSON.stringify({ name: user?.name, email: user?.email, phone: user?.phone ? "yes" : "no" }));
       const firstName = user?.name?.split(" ")[0] || "Guest";
       const lastName = user?.name?.split(" ").slice(1).join(" ") || "";
       const email = user?.email || "";
@@ -757,7 +760,7 @@ async function handleToolCall(
         ? `If a credit card is required, use: Card number ${cardDetails.number}, Exp ${String(cardDetails.expMonth).padStart(2, "0")}/${cardDetails.expYear}, CVC ${cardDetails.cvc}. `
         : "";
 
-      console.log("[complete_reservation] Starting browser automation for", restaurantName, "url:", reservationUrl);
+      console.error("[RESERVATION:4] Starting browseWebsite for", restaurantName);
       const result = await browseWebsite(
         reservationUrl,
         `Complete a restaurant reservation on this page. Follow these steps EXACTLY:\n` +
@@ -782,7 +785,7 @@ async function handleToolCall(
         { allowFinalSubmit: true }
       );
 
-      console.log("[complete_reservation] Browser result:", JSON.stringify({ success: result.success, summary: result.summary, error: result.error, url: result.currentUrl }));
+      console.error("[RESERVATION:5] browseWebsite returned", JSON.stringify({ success: result.success, summary: result.summary, error: result.error, url: result.currentUrl }));
       if (result.success && result.summary) {
         const confirmed = result.summary.includes("CONFIRMED");
         const timeMatch = result.summary.match(/TIME:\s*(.+?)(?:\s*\||$)/i);
@@ -807,6 +810,7 @@ async function handleToolCall(
         fallbackUrl: reservationUrl,
       });
     } catch (e) {
+      console.error("[RESERVATION:ERROR] complete_reservation threw:", String(e), (e as Error)?.stack);
       return JSON.stringify({
         success: false,
         restaurant: restaurantName,
