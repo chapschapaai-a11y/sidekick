@@ -16,6 +16,19 @@ const instrumentSerif = Instrument_Serif({
 export const metadata: Metadata = {
   title: "Sidekick",
   description: "your person, in your pocket",
+  manifest: "/manifest.json",
+  icons: {
+    icon: [
+      { url: "/icon.svg", type: "image/svg+xml" },
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+    ],
+    apple: "/icon-180.png",
+  },
+  appleWebApp: {
+    capable: true,
+    title: "Sidekick",
+    statusBarStyle: "black-translucent",
+  },
 };
 
 export default function RootLayout({
