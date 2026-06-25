@@ -13,7 +13,7 @@ const SIDEKICK_TOOLS: Anthropic.Tool[] = [
   {
     name: "search_product",
     description:
-      "Search Amazon for a product using browser automation. Returns real product titles, prices, and URLs. Use this when the user asks to buy something — search first to get the real price, then show them the top result and ask for confirmation before spending.",
+      "Search Amazon for a product. Returns real product titles, prices, and URLs. Use this when the user asks to buy, order, or find a NON-FOOD item — books, electronics, household items, clothes, gifts, etc. If the request is about food delivery, use search_restaurants instead.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -81,7 +81,7 @@ const SIDEKICK_TOOLS: Anthropic.Tool[] = [
   {
     name: "search_restaurants",
     description:
-      "Search DoorDash for restaurants near the user's location. Returns restaurant names, ratings, delivery times, and URLs. Use when the user wants to order food.",
+      "Search DoorDash for restaurants near the user's location. Returns restaurant names, ratings, delivery times, and URLs. Use ONLY when the user wants to order FOOD for delivery — meals, drinks, groceries from restaurants. Do NOT use for books, electronics, or non-food items (use search_product for those).",
     input_schema: {
       type: "object" as const,
       properties: {
