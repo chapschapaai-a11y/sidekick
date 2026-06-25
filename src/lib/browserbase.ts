@@ -558,7 +558,7 @@ export async function browseWebsite(
   autofill?: { name?: string; email?: string; phone?: string; address?: string },
   contextId?: string,
   paymentCard?: { number: string; expMonth: number; expYear: number; cvc: string },
-  options?: { allowFinalSubmit?: boolean },
+  options?: { allowFinalSubmit?: boolean; openTableSearch?: string },
 ): Promise<BrowseResult> {
   const anthropic = new Anthropic();
   console.error("[BROWSE:1] Creating browser session...");
@@ -574,7 +574,7 @@ export async function browseWebsite(
       await page.goto(url, { waitUntil: "commit", timeout: 15000 });
       console.error("[BROWSE:3b] Page loaded (commit)");
     }
-    await page.waitForTimeout(4000);
+    await page.waitForTimeout(3000);
 
     if (url === "https://www.opentable.com") {
       const cookieBtn = page.locator('#onetrust-accept-btn-handler').first();
@@ -583,11 +583,35 @@ export async function browseWebsite(
         console.error("[BROWSE:3c] Cookie banner dismissed");
         await page.waitForTimeout(1500);
       }
-      const searchInput = page.locator('#home-autocomplete-input').first();
-      if (await searchInput.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await searchInput.click();
-        console.error("[BROWSE:3d] Search input clicked and focused");
-        await page.waitForTimeout(500);
+
+      if (options?.openTableSearch) {
+        console.error("[BROWSE:3d] Scripted OpenTable search for:", options.openTableSearch);
+        const searchInput = page.locator('#home-autocomplete-input').first();
+        if (await searchInput.isVisible({ timeout: 5000 }).catch(() => false)) {
+          await searchInput.click();
+          await page.waitForTimeout(500);
+          await searchInput.fill(options.openTableSearch);
+          console.error("[BROWSE:3e] Typed search query, waiting for suggestions...");
+          await page.waitForTimeout(3000);
+
+          const suggestion = page.locator('[class*="autocomplete"] a, [class*="Autocomplete"] a, [data-test*="autocomplete"] a, ul[role="listbox"] li a, [class*="suggestion"] a, [class*="result"] a[href*="/r/"]').first();
+          if (await suggestion.isVisible({ timeout: 5000 }).catch(() => false)) {
+            await suggestion.click();
+            console.error("[BROWSE:3f] Clicked restaurant suggestion");
+            await page.waitForTimeout(4000);
+          } else {
+            await page.keyboard.press("Enter");
+            console.error("[BROWSE:3f] No suggestion found, pressed Enter");
+            await page.waitForTimeout(4000);
+          }
+        }
+      } else {
+        const searchInput = page.locator('#home-autocomplete-input').first();
+        if (await searchInput.isVisible({ timeout: 3000 }).catch(() => false)) {
+          await searchInput.click();
+          console.error("[BROWSE:3d] Search input clicked and focused");
+          await page.waitForTimeout(500);
+        }
       }
     }
 
@@ -752,7 +776,7 @@ RULES:
       try {
         if (browserAction.action === "navigate" && browserAction.url) {
           await page.goto(browserAction.url, { waitUntil: "domcontentloaded", timeout: 25000 });
-          await page.waitForTimeout(3000);
+          await page.waitForTimeout(2000);
         } else if (browserAction.action === "click") {
           const indexMatch = browserAction.selector?.match(/^\[(\d+)\]$/);
           if (indexMatch && elements[parseInt(indexMatch[1])]) {
@@ -760,7 +784,7 @@ RULES:
           } else if (browserAction.selector) {
             await page.locator(browserAction.selector).first().click({ timeout: 5000 });
           }
-          await page.waitForTimeout(2000);
+          await page.waitForTimeout(1500);
         } else if (browserAction.action === "type" && browserAction.text) {
           const indexMatch = browserAction.selector?.match(/^\[(\d+)\]$/);
           if (indexMatch && elements[parseInt(indexMatch[1])]) {
@@ -770,7 +794,7 @@ RULES:
           } else {
             await page.keyboard.type(browserAction.text);
           }
-          await page.waitForTimeout(1000);
+          await page.waitForTimeout(800);
         } else if (browserAction.action === "select" && browserAction.selector && browserAction.text) {
           const indexMatch = browserAction.selector?.match(/^\[(\d+)\]$/);
           if (indexMatch && elements[parseInt(indexMatch[1])]) {
@@ -778,18 +802,18 @@ RULES:
           } else if (browserAction.selector) {
             await page.locator(browserAction.selector).first().selectOption({ label: browserAction.text });
           }
-          await page.waitForTimeout(1000);
+          await page.waitForTimeout(800);
         } else if (browserAction.action === "scroll") {
           await page.mouse.wheel(0, 600);
-          await page.waitForTimeout(1500);
+          await page.waitForTimeout(1000);
         } else if (browserAction.action === "scroll_up") {
           await page.mouse.wheel(0, -600);
-          await page.waitForTimeout(1500);
+          await page.waitForTimeout(1000);
         } else if (browserAction.action === "press_key" && browserAction.text) {
           await page.keyboard.press(browserAction.text);
-          await page.waitForTimeout(1000);
+          await page.waitForTimeout(800);
         } else if (browserAction.action === "wait") {
-          await page.waitForTimeout(3000);
+          await page.waitForTimeout(2000);
         }
       } catch (e) {
         conversationHistory.push({

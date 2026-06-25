@@ -803,12 +803,10 @@ async function handleToolCall(
       const dateFormatted = dateObj.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
 
       const openTableSearchSteps = isOpenTable
-        ? `CRITICAL RULE: NEVER use the "navigate" action to go to any OpenTable URL. OpenTable blocks direct URL navigation. You MUST only use click, type, and other on-page actions to navigate.\n\n` +
-          `1. You are on OpenTable's homepage. First, dismiss any cookie consent banner by clicking the Accept button (look for id="onetrust-accept-btn-handler").\n` +
-          `2. Find the search input field. It has id="home-autocomplete-input" or placeholder="Location, Restaurant, or Cuisine". Click on it, then type "${restaurantName} Salem MA".\n` +
-          `3. Wait for autocomplete suggestions to appear below the search box. Look for a suggestion that contains "${restaurantName}" — it will be a restaurant name, NOT a time slot. Click on that restaurant suggestion.\n` +
-          `4. You should now be on the restaurant's page. Look for party size and date controls. Set the party size to ${partySize} and the date to ${dateFormatted}.\n` +
-          `5. Look for available time slots near ${time}. Click on the time slot closest to ${time}. If ${time} is not available, pick the nearest available time.\n`
+        ? `CRITICAL RULE: NEVER use the "navigate" action to go to any OpenTable URL. OpenTable blocks direct URL navigation. You MUST only use click, type, and other on-page actions.\n\n` +
+          `You are on the ${restaurantName} restaurant page (search was done automatically).\n` +
+          `1. Look for party size and date controls. Set the party size to ${partySize} and the date to ${dateFormatted}.\n` +
+          `2. Look for available time slots near ${time}. Click on the time slot closest to ${time}. If ${time} is not available, pick the nearest available time.\n`
         : `1. The page should show ${restaurantName} with ${partySize} people.\n` +
           `2. Look for available time slots near ${time}. Click on the time slot closest to ${time}.\n`;
 
@@ -816,23 +814,23 @@ async function handleToolCall(
         startUrl,
         `Complete a restaurant reservation. Follow these steps EXACTLY:\n` +
         openTableSearchSteps +
-        `6. ${seatingInstruction}If there is a seating preference dropdown or option and no preference was specified, leave it as the default.\n` +
-        `7. You should reach a form asking for diner details. Fill in:\n` +
+        `3. ${seatingInstruction}If there is a seating preference dropdown or option and no preference was specified, leave it as the default.\n` +
+        `4. You should reach a form asking for diner details. Fill in:\n` +
         `   - First name: ${firstName}\n` +
         `   - Last name: ${lastName}\n` +
         `   - Email: ${email}\n` +
         `   - Phone: ${phone}\n` +
-        `8. ${cardInstruction}\n` +
-        `9. If there are any special requests or notes fields, leave them empty.\n` +
-        `10. Review the reservation details, then click the final "Complete reservation" or "Confirm" button.\n` +
-        `11. After clicking confirm, wait for the confirmation page to load.\n` +
-        `12. Return "done" with: CONFIRMED: [restaurant name] | DATE: [date] | TIME: [time selected] | PARTY: [number] | CONFIRMATION: [any confirmation number shown]\n` +
+        `5. ${cardInstruction}\n` +
+        `6. If there are any special requests or notes fields, leave them empty.\n` +
+        `7. Review the reservation details, then click the final "Complete reservation" or "Confirm" button.\n` +
+        `8. After clicking confirm, wait for the confirmation page to load.\n` +
+        `9. Return "done" with: CONFIRMED: [restaurant name] | DATE: [date] | TIME: [time selected] | PARTY: [number] | CONFIRMATION: [any confirmation number shown]\n` +
         `If you cannot complete the reservation (no times available, error, etc.), return: FAILED: [reason]\n` +
         `IMPORTANT: Do NOT stop before clicking the final confirm button. Complete the entire booking.`,
         { name: user?.name || "", email, phone, address: user?.homeAddress || "" },
         undefined,
         undefined,
-        { allowFinalSubmit: true }
+        { allowFinalSubmit: true, openTableSearch: isOpenTable ? `${restaurantName} Salem MA` : undefined }
       );
 
       console.error("[RESERVATION:5] browseWebsite returned", JSON.stringify({ success: result.success, summary: result.summary, error: result.error, url: result.currentUrl }));
