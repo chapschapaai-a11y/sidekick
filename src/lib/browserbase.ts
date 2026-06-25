@@ -16,10 +16,13 @@ export async function createBrowserSession(contextId?: string) {
     browserSettings.context = { id: contextId, persist: true };
   }
 
-  const session = await bb.sessions.create({
+  const sessionOptions: Record<string, unknown> = {
     projectId: process.env.BROWSERBASE_PROJECT_ID!,
     browserSettings,
-  } as Record<string, unknown>);
+    proxies: true,
+  };
+
+  const session = await bb.sessions.create(sessionOptions);
 
   const browser = await chromium.connectOverCDP(session.connectUrl!);
   const context = browser.contexts()[0];
