@@ -148,7 +148,11 @@ export async function createCalendarEvent(
     },
   );
 
-  if (!res.ok) return null;
+  if (!res.ok) {
+    const err = await res.text();
+    console.error("[CALENDAR:CREATE] Failed:", res.status, err);
+    return null;
+  }
   const data = await res.json();
   return { id: data.id, htmlLink: data.htmlLink };
 }
