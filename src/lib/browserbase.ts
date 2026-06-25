@@ -576,6 +576,21 @@ export async function browseWebsite(
     }
     await page.waitForTimeout(4000);
 
+    if (url === "https://www.opentable.com") {
+      const cookieBtn = page.locator('#onetrust-accept-btn-handler').first();
+      if (await cookieBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+        await cookieBtn.click();
+        console.error("[BROWSE:3c] Cookie banner dismissed");
+        await page.waitForTimeout(1500);
+      }
+      const searchInput = page.locator('#home-autocomplete-input').first();
+      if (await searchInput.isVisible({ timeout: 3000 }).catch(() => false)) {
+        await searchInput.click();
+        console.error("[BROWSE:3d] Search input clicked and focused");
+        await page.waitForTimeout(500);
+      }
+    }
+
     const pageContent = await page.locator("body").textContent({ timeout: 5000 }).catch(() => "");
     console.error("[BROWSE:4] Page content length:", pageContent?.trim().length || 0, "title:", await page.title().catch(() => "?"));
     if (!pageContent || pageContent.trim().length < 50) {
