@@ -651,13 +651,15 @@ ${visibleText}
 INTERACTIVE ELEMENTS:
 ${interactiveElements.slice(0, 50).join("\n")}`;
 
-      const systemPrompt = `You are a browser automation agent completing an online ordering task. You take ONE action per response.
+      const systemPrompt = `You are a browser automation agent. You take ONE action per response.
+
+CRITICAL: Your ENTIRE response must be a single JSON object. No text before or after it. No markdown. No explanation. ONLY JSON.
 
 TASK: ${task}
 ${autofillInfo}${paymentInfo}
 
 RULES:
-1. Respond with ONLY a JSON object — no markdown, no explanation.
+1. Your response must be ONLY a valid JSON object — nothing else.
 2. Format: {"action": "click|type|navigate|select|scroll|scroll_up|press_key|wait|done|fail", "selector": "[index]", "text": "for type/press_key", "url": "for navigate", "summary": "brief description"}
 3. Use element index like [3] from the INTERACTIVE ELEMENTS list.
 4. To type into a field, first click it in one step, then type in the next step.
@@ -695,8 +697,20 @@ RULES:
         const cleaned = actionText.replace(/```json?\s*/g, "").replace(/```/g, "").trim();
         browserAction = JSON.parse(cleaned);
       } catch {
-        console.error(`[BROWSE:STEP:${step}] Failed to parse AI response:`, actionText.slice(0, 200));
-        continue;
+        const jsonMatch = actionText.match(/\{[\s\S]*"action"\s*:\s*"[^"]+[\s\S]*\}/);
+        if (jsonMatch) {
+          try {
+            browserAction = JSON.parse(jsonMatch[0]);
+          } catch {
+            console.error(`[BROWSE:STEP:${step}] Failed to parse AI response:`, actionText.slice(0, 200));
+            conversationHistory.push({ role: "user", content: "RESPOND WITH ONLY A JSON OBJECT. No explanation, no prose. Just {\"action\": \"...\", \"summary\": \"...\"}." });
+            continue;
+          }
+        } else {
+          console.error(`[BROWSE:STEP:${step}] Failed to parse AI response:`, actionText.slice(0, 200));
+          conversationHistory.push({ role: "user", content: "RESPOND WITH ONLY A JSON OBJECT. No explanation, no prose. Just {\"action\": \"...\", \"summary\": \"...\"}." });
+          continue;
+        }
       }
 
       console.error(`[BROWSE:STEP:${step}] Action: ${browserAction.action} | ${browserAction.summary || ""} | selector: ${browserAction.selector || "none"}`);
