@@ -915,6 +915,255 @@ RULES:
   }
 }
 
+export interface OpenTableSlot {
+  time: string;
+  slotHash: string;
+  availabilityToken: string;
+  type: string;
+}
+
+export interface OpenTableSearchResult {
+  restaurantId: number;
+  restaurantName: string;
+  slots: OpenTableSlot[];
+  date: string;
+  partySize: number;
+}
+
+export async function completeOpenTableReservation(
+  restaurantQuery: string,
+  date: string,
+  time: string,
+  partySize: number,
+  diner: { firstName: string; lastName: string; email: string; phone: string },
+  seatingPreference?: string,
+): Promise<BrowseResult> {
+  const anthropic = new Anthropic();
+  const { browser, page, sessionId } = await createBrowserSession();
+  console.error("[OT-API:1] Session created:", sessionId);
+
+  try {
+    await page.goto("https://www.opentable.com", { waitUntil: "domcontentloaded", timeout: 30000 });
+    await page.waitForTimeout(3000);
+    console.error("[OT-API:2] OpenTable homepage loaded");
+
+    // Step 1: Search for the restaurant via Autocomplete GraphQL API
+    const searchResult = await page.evaluate(async (query: string) => {
+      const csrfToken = (document.cookie.match(/csrf_token=([^;]+)/) || [])[1] || "";
+      const res = await fetch("/dapi/fe/gql?optype=query&opname=Autocomplete", {
+        method: "POST",
+        headers: {
+          "accept": "*/*",
+          "content-type": "application/json",
+          "x-csrf-token": csrfToken,
+        },
+        body: JSON.stringify({
+          operationName: "Autocomplete",
+          variables: { term: query, latitude: 42.5195, longitude: -70.8967, useNewVersion: true },
+          extensions: { persistedQuery: { version: 1, sha256Hash: "fe1d118abd4c227750693027c2414d43014c2493f64f49bcef5a65274ce9c3c3" } },
+        }),
+      });
+      const data = await res.json();
+      const restaurants = data?.data?.autocomplete?.autocompleteRestaurants || [];
+      if (restaurants.length === 0) return null;
+      const first = restaurants[0];
+      return { id: first.rid, name: first.name };
+    }, restaurantQuery);
+
+    if (!searchResult) {
+      console.error("[OT-API:3] No restaurant found for:", restaurantQuery);
+      return { success: false, summary: `Could not find "${restaurantQuery}" on OpenTable`, currentUrl: page.url(), pageTitle: "" };
+    }
+    console.error("[OT-API:3] Found restaurant:", searchResult.name, "ID:", searchResult.id);
+
+    // Step 2: Get availability via RestaurantsAvailability GraphQL API
+    const availability = await page.evaluate(async (args: { rid: number; date: string; time: string; partySize: number }) => {
+      const csrfToken = (document.cookie.match(/csrf_token=([^;]+)/) || [])[1] || "";
+      const res = await fetch("/dapi/fe/gql?optype=query&opname=RestaurantsAvailability", {
+        method: "POST",
+        headers: {
+          "accept": "*/*",
+          "content-type": "application/json",
+          "x-csrf-token": csrfToken,
+        },
+        body: JSON.stringify({
+          operationName: "RestaurantsAvailability",
+          variables: {
+            onlyPop: false,
+            forwardDays: 0,
+            requireTimes: false,
+            requireTypes: ["Standard", "Experience"],
+            privilegedAccess: [],
+            restaurantIds: [args.rid],
+            date: args.date,
+            time: args.time,
+            partySize: args.partySize,
+            databaseRegion: "NA",
+            forwardMinutes: 210,
+            backwardMinutes: 210,
+            loyaltyRedemptionTiers: [],
+          },
+          extensions: { persistedQuery: { version: 1, sha256Hash: "436770d3236803f6bb7e8bdfc7b617a582026235c1a6af52297ab63fed08aa0c" } },
+        }),
+      });
+      const data = await res.json();
+      const restaurant = data?.data?.availability?.[0];
+      if (!restaurant) return null;
+      const slots = restaurant.availabilityDays?.[0]?.slots?.filter((s: { isAvailable: boolean }) => s.isAvailable) || [];
+      return {
+        restaurantAvailabilityToken: restaurant.restaurantAvailabilityToken,
+        slots: slots.map((s: { timeOffsetMinutes: number; slotHash: string; slotAvailabilityToken: string; type: string }) => ({
+          offsetMinutes: s.timeOffsetMinutes,
+          slotHash: s.slotHash,
+          token: s.slotAvailabilityToken,
+          type: s.type,
+        })),
+      };
+    }, { rid: searchResult.id, date, time, partySize });
+
+    if (!availability || availability.slots.length === 0) {
+      console.error("[OT-API:4] No available slots for", searchResult.name);
+      return { success: false, summary: `No available times at ${searchResult.name} for ${partySize} on ${date} near ${time}`, currentUrl: page.url(), pageTitle: "" };
+    }
+
+    // Pick the slot closest to requested time (offset 0 = exact match)
+    const sorted = [...availability.slots].sort((a: { offsetMinutes: number }, b: { offsetMinutes: number }) => Math.abs(a.offsetMinutes) - Math.abs(b.offsetMinutes));
+    const bestSlot = sorted[0];
+
+    // Convert offset to actual time
+    const [reqH, reqM] = time.split(":").map(Number);
+    const totalMinutes = reqH * 60 + reqM + bestSlot.offsetMinutes;
+    const slotH = Math.floor(totalMinutes / 60);
+    const slotM = totalMinutes % 60;
+    const slotTime = `${String(slotH).padStart(2, "0")}:${String(slotM).padStart(2, "0")}:00`;
+
+    console.error("[OT-API:4] Best slot:", slotTime, "hash:", bestSlot.slotHash, "offset:", bestSlot.offsetMinutes);
+
+    // Step 3: Navigate directly to the booking page (bypasses Akamai WAF on /r/ pages)
+    const bookingUrl = `https://www.opentable.com/booking/seating-options?` +
+      `availabilityToken=${encodeURIComponent(bestSlot.token)}` +
+      `&creditCardRequired=false` +
+      `&dateTime=${date}T${slotTime}` +
+      `&partySize=${partySize}` +
+      `&points=100&pointsType=Standard&resoAttribute=unselected` +
+      `&rid=${searchResult.id}` +
+      `&slotHash=${bestSlot.slotHash}` +
+      `&isModify=false&isMandatory=false&cfe=true&st=${bestSlot.type}`;
+
+    console.error("[OT-API:5] Navigating to booking page...");
+    await page.goto(bookingUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await page.waitForTimeout(3000);
+    console.error("[OT-API:6] Booking page loaded:", page.url());
+
+    // Step 4: AI agent handles the simple booking form
+    const seatingInstruction = seatingPreference
+      ? `Select "${seatingPreference}" seating if the option is available.`
+      : "Select any available seating option (e.g. Standard / Inside).";
+
+    const conversationHistory: { role: "user" | "assistant"; content: string }[] = [];
+    const MAX_STEPS = 15;
+
+    for (let step = 0; step < MAX_STEPS; step++) {
+      const title = await page.title().catch(() => "");
+      const currentUrl = page.url();
+
+      const interactiveElements: string[] = [];
+      const elements = await page.locator("a, button, input, select, textarea, [role='button'], [role='link'], [role='menuitem'], [role='tab'], [role='option'], [role='checkbox'], [role='radio']").all();
+
+      for (let i = 0; i < Math.min(elements.length, 80); i++) {
+        try {
+          const el = elements[i];
+          if (!(await el.isVisible().catch(() => false))) continue;
+          const tag = await el.evaluate((e) => e.tagName.toLowerCase()).catch(() => "");
+          const text = (await el.textContent({ timeout: 500 }).catch(() => "") || "").trim().slice(0, 100);
+          const placeholder = await el.getAttribute("placeholder").catch(() => "");
+          const ariaLabel = await el.getAttribute("aria-label").catch(() => "");
+          const type = await el.getAttribute("type").catch(() => "");
+          const name = await el.getAttribute("name").catch(() => "");
+          const id = await el.getAttribute("id").catch(() => "");
+          const value = await el.inputValue().catch(() => "");
+          const checked = await el.isChecked().catch(() => null);
+          const desc = [tag, type ? `type=${type}` : "", id ? `id="${id}"` : "", name ? `name="${name}"` : "", placeholder ? `placeholder="${placeholder}"` : "", ariaLabel ? `aria-label="${ariaLabel}"` : "", text ? `"${text}"` : "", value ? `value="${value.slice(0, 50)}"` : "", checked === true ? "checked" : ""].filter(Boolean).join(" ");
+          interactiveElements.push(`[${i}] ${desc}`);
+        } catch { continue; }
+      }
+
+      const pageText = await page.locator("body").textContent({ timeout: 5000 }).catch(() => "");
+      const visibleText = (pageText || "").replace(/\s+/g, " ").trim().slice(0, 3000);
+
+      const userMessage = `CURRENT PAGE (step ${step + 1}/${MAX_STEPS}):\nURL: ${currentUrl}\nTitle: ${title}\n\nPAGE CONTENT:\n${visibleText}\n\nINTERACTIVE ELEMENTS:\n${interactiveElements.slice(0, 50).join("\n")}`;
+      conversationHistory.push({ role: "user", content: userMessage });
+
+      const response = await anthropic.messages.create({
+        model: "claude-sonnet-4-6",
+        max_tokens: 400,
+        system: `You are a browser automation agent completing an OpenTable reservation. Respond with ONLY a JSON object.\n\nBOOKING: ${searchResult.name} | ${date} | ${partySize} people\n\nSTEPS:\n1. If on seating options page: ${seatingInstruction} Click "Select" next to it.\n2. If on details/form page: Fill in First name: ${diner.firstName}, Last name: ${diner.lastName}, Email: ${diner.email}, Phone: ${diner.phone}. Uncheck any marketing checkboxes. Then click "Complete reservation".\n3. If on confirmation page: Return done with confirmation details.\n\nFormat: {"action": "click|type|select|scroll|press_key|wait|done|fail", "selector": "[index]", "text": "...", "summary": "..."}`,
+        messages: conversationHistory.slice(-10),
+      });
+
+      const actionText = response.content[0].type === "text" ? response.content[0].text : "";
+      conversationHistory.push({ role: "assistant", content: actionText });
+
+      let browserAction: BrowserAction;
+      try {
+        const cleaned = actionText.replace(/```json?\s*/g, "").replace(/```/g, "").trim();
+        browserAction = JSON.parse(cleaned);
+      } catch {
+        const jsonMatch = actionText.match(/\{[\s\S]*"action"\s*:\s*"[^"]+[\s\S]*\}/);
+        if (jsonMatch) { try { browserAction = JSON.parse(jsonMatch[0]); } catch { continue; } } else { continue; }
+      }
+
+      console.error(`[OT-API:STEP:${step}] ${browserAction.action} | ${browserAction.summary || ""}`);
+
+      if (browserAction.action === "done") {
+        return { success: true, summary: browserAction.summary, currentUrl: page.url(), pageTitle: await page.title().catch(() => "") };
+      }
+      if (browserAction.action === "fail") {
+        return { success: false, summary: browserAction.summary, currentUrl: page.url(), pageTitle: await page.title().catch(() => ""), error: browserAction.summary };
+      }
+
+      try {
+        if (browserAction.action === "click") {
+          const indexMatch = browserAction.selector?.match(/^\[(\d+)\]$/);
+          if (indexMatch && elements[parseInt(indexMatch[1])]) {
+            await elements[parseInt(indexMatch[1])].click({ timeout: 5000 });
+          }
+          await page.waitForTimeout(2000);
+        } else if (browserAction.action === "type" && browserAction.text) {
+          const indexMatch = browserAction.selector?.match(/^\[(\d+)\]$/);
+          if (indexMatch && elements[parseInt(indexMatch[1])]) {
+            await elements[parseInt(indexMatch[1])].fill(browserAction.text);
+          } else {
+            await page.keyboard.type(browserAction.text);
+          }
+          await page.waitForTimeout(500);
+        } else if (browserAction.action === "select" && browserAction.selector && browserAction.text) {
+          const indexMatch = browserAction.selector?.match(/^\[(\d+)\]$/);
+          if (indexMatch && elements[parseInt(indexMatch[1])]) {
+            await elements[parseInt(indexMatch[1])].selectOption({ label: browserAction.text });
+          }
+          await page.waitForTimeout(500);
+        } else if (browserAction.action === "scroll") {
+          await page.mouse.wheel(0, 600);
+          await page.waitForTimeout(1000);
+        } else if (browserAction.action === "press_key" && browserAction.text) {
+          await page.keyboard.press(browserAction.text);
+          await page.waitForTimeout(500);
+        } else if (browserAction.action === "wait") {
+          await page.waitForTimeout(2000);
+        }
+      } catch (e) {
+        conversationHistory.push({ role: "user", content: `ACTION FAILED: ${String(e).slice(0, 200)}. Try a different approach.` });
+        conversationHistory.push({ role: "assistant", content: `{"action": "wait", "summary": "Retrying after error"}` });
+      }
+    }
+
+    return { success: false, summary: "Reached maximum steps without completing the booking", currentUrl: page.url(), pageTitle: await page.title().catch(() => ""), error: "Reached maximum steps" };
+  } finally {
+    await browser.close();
+  }
+}
+
 export async function addAmazonToCart(productUrl: string): Promise<OrderResult> {
   const { browser, page } = await createBrowserSession();
 

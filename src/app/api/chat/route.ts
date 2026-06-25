@@ -743,15 +743,19 @@ async function handleToolCall(
       });
     }
 
-    const fallbackUrl = `https://www.opentable.com/s?term=${encodeURIComponent(restaurant)}&covers=${partySize}&dateTime=${date}T${time}&metroId=4&regionIds=&neighborhoodIds=`;
+    // Restaurant not in local database — use OpenTable API search (works for any restaurant worldwide)
+    const reservationUrl = `https://www.opentable.com/r/unknown?covers=${partySize}&dateTime=${date}T${time}`;
+    const timeFormatted = new Date(`2000-01-01T${time}`).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+    const dateFormatted = new Date(date + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
     return JSON.stringify({
-      found: false,
+      found: true,
       restaurant,
+      platform: "opentable",
+      date: dateFormatted,
+      time: timeFormatted,
       partySize,
-      date: new Date(date + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" }),
-      time: new Date(`2000-01-01T${time}`).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }),
-      searchUrl: fallbackUrl,
-      message: `Couldn't find ${restaurant} in the local database. Here's an OpenTable search link.`,
+      reservationUrl,
+      _nextStep: "Ask user about seating preference (inside/outside/bar/no preference), then call complete_reservation with the reservationUrl above. Do NOT show the reservationUrl to the user as a link.",
     });
   }
 
@@ -795,43 +799,52 @@ async function handleToolCall(
         ? `If a credit card is required, use: Card number ${cardDetails.number}, Exp ${String(cardDetails.expMonth).padStart(2, "0")}/${cardDetails.expYear}, CVC ${cardDetails.cvc}. `
         : "";
 
-      console.error("[RESERVATION:4] Starting browseWebsite for", restaurantName);
+      console.error("[RESERVATION:4] Starting reservation for", restaurantName);
 
       const isOpenTable = reservationUrl.includes("opentable.com");
-      const startUrl = isOpenTable ? "https://www.opentable.com" : reservationUrl;
-      const dateObj = toolInput && (toolInput as Record<string, unknown>).date ? new Date((toolInput as Record<string, unknown>).date + "T12:00:00") : new Date();
-      const dateFormatted = dateObj.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+      const reservationDate = (toolInput as Record<string, unknown>).date as string || new Date().toISOString().split("T")[0];
 
-      const openTableSearchSteps = isOpenTable
-        ? `CRITICAL RULE: NEVER use the "navigate" action to go to any OpenTable URL. OpenTable blocks direct URL navigation. You MUST only use click, type, and other on-page actions.\n\n` +
-          `You are on the ${restaurantName} restaurant page (search was done automatically).\n` +
-          `1. Look for party size and date controls. Set the party size to ${partySize} and the date to ${dateFormatted}.\n` +
-          `2. Look for available time slots near ${time}. Click on the time slot closest to ${time}. If ${time} is not available, pick the nearest available time.\n`
-        : `1. The page should show ${restaurantName} with ${partySize} people.\n` +
-          `2. Look for available time slots near ${time}. Click on the time slot closest to ${time}.\n`;
+      let result: Awaited<ReturnType<typeof browseWebsite>>;
 
-      const result = await browseWebsite(
-        startUrl,
-        `Complete a restaurant reservation. Follow these steps EXACTLY:\n` +
-        openTableSearchSteps +
-        `3. ${seatingInstruction}If there is a seating preference dropdown or option and no preference was specified, leave it as the default.\n` +
-        `4. You should reach a form asking for diner details. Fill in:\n` +
-        `   - First name: ${firstName}\n` +
-        `   - Last name: ${lastName}\n` +
-        `   - Email: ${email}\n` +
-        `   - Phone: ${phone}\n` +
-        `5. ${cardInstruction}\n` +
-        `6. If there are any special requests or notes fields, leave them empty.\n` +
-        `7. Review the reservation details, then click the final "Complete reservation" or "Confirm" button.\n` +
-        `8. After clicking confirm, wait for the confirmation page to load.\n` +
-        `9. Return "done" with: CONFIRMED: [restaurant name] | DATE: [date] | TIME: [time selected] | PARTY: [number] | CONFIRMATION: [any confirmation number shown]\n` +
-        `If you cannot complete the reservation (no times available, error, etc.), return: FAILED: [reason]\n` +
-        `IMPORTANT: Do NOT stop before clicking the final confirm button. Complete the entire booking.`,
-        { name: user?.name || "", email, phone, address: user?.homeAddress || "" },
-        undefined,
-        undefined,
-        { allowFinalSubmit: true, openTableSearch: isOpenTable ? `${restaurantName} Salem MA` : undefined }
-      );
+      if (isOpenTable) {
+        // Use API-based approach: GraphQL search → availability → direct booking URL
+        const { completeOpenTableReservation } = await getBrowserbase();
+        console.error("[RESERVATION:4a] Using OpenTable API approach");
+        result = await completeOpenTableReservation(
+          restaurantName,
+          reservationDate,
+          time,
+          partySize,
+          { firstName, lastName, email, phone },
+          seatingPreference,
+        );
+      } else {
+        const dateObj = new Date(reservationDate + "T12:00:00");
+        const dateFormatted = dateObj.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+        result = await browseWebsite(
+          reservationUrl,
+          `Complete a restaurant reservation. Follow these steps EXACTLY:\n` +
+          `1. The page should show ${restaurantName} with ${partySize} people.\n` +
+          `2. Look for available time slots near ${time}. Click on the time slot closest to ${time}.\n` +
+          `3. ${seatingInstruction}If there is a seating preference dropdown or option and no preference was specified, leave it as the default.\n` +
+          `4. You should reach a form asking for diner details. Fill in:\n` +
+          `   - First name: ${firstName}\n` +
+          `   - Last name: ${lastName}\n` +
+          `   - Email: ${email}\n` +
+          `   - Phone: ${phone}\n` +
+          `5. ${cardInstruction}\n` +
+          `6. If there are any special requests or notes fields, leave them empty.\n` +
+          `7. Review the reservation details, then click the final "Complete reservation" or "Confirm" button.\n` +
+          `8. After clicking confirm, wait for the confirmation page to load.\n` +
+          `9. Return "done" with: CONFIRMED: [restaurant name] | DATE: [date] | TIME: [time selected] | PARTY: [number] | CONFIRMATION: [any confirmation number shown]\n` +
+          `If you cannot complete the reservation (no times available, error, etc.), return: FAILED: [reason]\n` +
+          `IMPORTANT: Do NOT stop before clicking the final confirm button. Complete the entire booking.`,
+          { name: user?.name || "", email, phone, address: user?.homeAddress || "" },
+          undefined,
+          undefined,
+          { allowFinalSubmit: true }
+        );
+      }
 
       console.error("[RESERVATION:5] browseWebsite returned", JSON.stringify({ success: result.success, summary: result.summary, error: result.error, url: result.currentUrl }));
       if (result.success && result.summary) {
