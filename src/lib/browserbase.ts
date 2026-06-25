@@ -958,9 +958,8 @@ export async function completeOpenTableReservation(
 
     // Step 1: Search for the restaurant via Autocomplete GraphQL API
     const searchResult = await page.evaluate(async (query: string) => {
-      const csrfToken = (document.cookie.match(/csrf_token=([^;]+)/) || [])[1]
-        || (document.querySelector('meta[name="csrf-token"]') as HTMLMetaElement)?.content
-        || "";
+      // CSRF token is HttpOnly cookie — read from window global set by OpenTable's JS
+      const csrfToken = (window as unknown as Record<string, string>).__CSRF_TOKEN__ || "";
       const res = await fetch("/dapi/fe/gql?optype=query&opname=Autocomplete", {
         method: "POST",
         headers: {
@@ -976,10 +975,25 @@ export async function completeOpenTableReservation(
       });
       if (!res.ok) return { error: `HTTP ${res.status}`, hasCSRF: !!csrfToken } as { error: string; hasCSRF: boolean };
       const data = await res.json();
-      const restaurants = data?.data?.autocomplete?.autocompleteRestaurants || [];
+      const allResults = data?.data?.autocomplete?.autocompleteResults || [];
+      const restaurants = allResults.filter((r: Record<string, string>) => r.type === "Restaurant");
       if (restaurants.length === 0) return null;
-      const first = restaurants[0];
-      return { id: first.rid as number, name: first.name as string };
+
+      // Find best name match — results aren't ranked by relevance
+      const queryLower = query.toLowerCase().replace(/['']/g, "");
+      let best = restaurants[0];
+      let bestScore = 0;
+      for (const r of restaurants) {
+        const nameLower = (r.name as string).toLowerCase().replace(/['']/g, "");
+        const queryWords = queryLower.split(/\s+/);
+        let score = 0;
+        for (const word of queryWords) {
+          if (nameLower.includes(word)) score += word.length;
+        }
+        if (nameLower.includes(queryLower)) score += 100;
+        if (score > bestScore) { bestScore = score; best = r; }
+      }
+      return { id: parseInt(best.id as string, 10), name: best.name as string };
     }, restaurantQuery) as { id: number; name: string } | { error: string; hasCSRF: boolean } | null;
 
     if (!searchResult) {
@@ -994,9 +1008,7 @@ export async function completeOpenTableReservation(
 
     // Step 2: Get availability via RestaurantsAvailability GraphQL API
     const availability = await page.evaluate(async (args: { rid: number; date: string; time: string; partySize: number }) => {
-      const csrfToken = (document.cookie.match(/csrf_token=([^;]+)/) || [])[1]
-        || (document.querySelector('meta[name="csrf-token"]') as HTMLMetaElement)?.content
-        || "";
+      const csrfToken = (window as unknown as Record<string, string>).__CSRF_TOKEN__ || "";
       const res = await fetch("/dapi/fe/gql?optype=query&opname=RestaurantsAvailability", {
         method: "POST",
         headers: {
