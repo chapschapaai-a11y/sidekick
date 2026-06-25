@@ -869,7 +869,7 @@ async function handleToolCall(
   return JSON.stringify({ error: "Unknown tool" });
 }
 
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
   const userId = await getSessionUserId();
