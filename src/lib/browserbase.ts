@@ -577,17 +577,44 @@ export async function browseWebsite(
     await page.waitForTimeout(3000);
 
     if (url === "https://www.opentable.com") {
+      // Wait for the page to fully render — OpenTable is a SPA that loads slowly
+      await page.waitForTimeout(5000);
+
       const cookieBtn = page.locator('#onetrust-accept-btn-handler').first();
-      if (await cookieBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+      if (await cookieBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
         await cookieBtn.click();
         console.error("[BROWSE:3c] Cookie banner dismissed");
         await page.waitForTimeout(1500);
+      } else {
+        console.error("[BROWSE:3c] No cookie banner found");
       }
 
       if (options?.openTableSearch) {
         console.error("[BROWSE:3d] Scripted OpenTable search for:", options.openTableSearch);
-        const searchInput = page.locator('#home-autocomplete-input').first();
-        if (await searchInput.isVisible({ timeout: 5000 }).catch(() => false)) {
+        // Try multiple selectors for the search input
+        const searchSelectors = [
+          '#home-autocomplete-input',
+          'input[placeholder*="Location, Restaurant"]',
+          'input[placeholder*="restaurant"]',
+          'input[aria-label*="search"]',
+          'input[data-test*="search"]',
+          'input[type="search"]',
+        ];
+        let searchInput = null;
+        for (const sel of searchSelectors) {
+          try {
+            await page.waitForSelector(sel, { state: "visible", timeout: 3000 });
+            searchInput = page.locator(sel).first();
+            console.error("[BROWSE:3d2] Found search input with:", sel);
+            break;
+          } catch {
+            continue;
+          }
+        }
+        if (!searchInput) {
+          console.error("[BROWSE:3d2] No search input found with any selector");
+        }
+        if (searchInput) {
           await searchInput.click();
           await page.waitForTimeout(500);
           // Use keyboard.type instead of fill to trigger autocomplete events
