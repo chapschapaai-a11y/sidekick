@@ -768,10 +768,11 @@ async function handleToolCall(
       const dateFormatted = dateObj.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
 
       const openTableSearchSteps = isOpenTable
-        ? `1. You are on OpenTable's homepage. First, dismiss any cookie consent banner by clicking "Accept" or similar.\n` +
-          `2. Find the search input (id="home-autocomplete-input" or placeholder="Location, Restaurant, or Cuisine") and type "${restaurantName}".\n` +
-          `3. Wait for autocomplete suggestions to appear. Click on the suggestion that matches "${restaurantName}" (the restaurant name, NOT a time or date).\n` +
-          `4. You should now be on the restaurant's page. Set the party size to ${partySize} and the date to ${dateFormatted}.\n` +
+        ? `CRITICAL RULE: NEVER use the "navigate" action to go to any OpenTable URL. OpenTable blocks direct URL navigation. You MUST only use click, type, and other on-page actions to navigate.\n\n` +
+          `1. You are on OpenTable's homepage. First, dismiss any cookie consent banner by clicking the Accept button (look for id="onetrust-accept-btn-handler").\n` +
+          `2. Find the search input field. It has id="home-autocomplete-input" or placeholder="Location, Restaurant, or Cuisine". Click on it, then type "${restaurantName} Salem MA".\n` +
+          `3. Wait for autocomplete suggestions to appear below the search box. Look for a suggestion that contains "${restaurantName}" — it will be a restaurant name, NOT a time slot. Click on that restaurant suggestion.\n` +
+          `4. You should now be on the restaurant's page. Look for party size and date controls. Set the party size to ${partySize} and the date to ${dateFormatted}.\n` +
           `5. Look for available time slots near ${time}. Click on the time slot closest to ${time}. If ${time} is not available, pick the nearest available time.\n`
         : `1. The page should show ${restaurantName} with ${partySize} people.\n` +
           `2. Look for available time slots near ${time}. Click on the time slot closest to ${time}.\n`;
