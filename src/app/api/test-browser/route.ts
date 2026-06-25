@@ -20,7 +20,7 @@ export async function GET() {
     steps.push(`5b. Homepage title: ${homeTitle}`);
 
     steps.push("6. Searching for restaurant...");
-    const searchInput = page.locator('input[aria-label*="search"], input[placeholder*="restaurant"], input[id*="search"], input[name*="search"], #search-autocomplete-input').first();
+    const searchInput = page.locator('#home-autocomplete-input, input[placeholder*="Location, Restaurant"]').first();
     const searchVisible = await searchInput.isVisible({ timeout: 5000 }).catch(() => false);
     steps.push(`6b. Search input visible: ${searchVisible}`);
 
