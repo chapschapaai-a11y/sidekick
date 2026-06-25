@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "@/lib/db";
 import { getSessionUserId } from "@/lib/auth";
-import { fetchTodayEvents, fetchCalendarRange, fetchRecentEmails, CalendarEvent, GmailThread } from "@/lib/google";
+import { fetchTodayEvents, fetchCalendarRange, fetchRecentEmails, createCalendarEvent, CalendarEvent, GmailThread } from "@/lib/google";
 async function getBrowserbase() {
   return await import("@/lib/browserbase");
 }
@@ -219,6 +219,41 @@ const SIDEKICK_TOOLS: Anthropic.Tool[] = [
         },
       },
       required: ["startDate", "endDate"],
+    },
+  },
+  {
+    name: "add_calendar_event",
+    description:
+      "Add an event to the user's Google Calendar. Use when the user asks to add, schedule, or put something on their calendar. Convert relative dates to absolute (tomorrow, this Friday, etc.). Default duration is 1 hour if not specified.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        title: {
+          type: "string",
+          description: "Event title (e.g. 'Dinner at Ledger', 'Team meeting', 'Dentist appointment')",
+        },
+        date: {
+          type: "string",
+          description: "Date in YYYY-MM-DD format",
+        },
+        startTime: {
+          type: "string",
+          description: "Start time in HH:MM 24-hour format (e.g. '19:00' for 7 PM)",
+        },
+        endTime: {
+          type: "string",
+          description: "End time in HH:MM 24-hour format. Defaults to 1 hour after start if not specified.",
+        },
+        location: {
+          type: "string",
+          description: "Optional location/address for the event",
+        },
+        description: {
+          type: "string",
+          description: "Optional description or notes for the event",
+        },
+      },
+      required: ["title", "date", "startTime"],
     },
   },
   {
@@ -867,6 +902,36 @@ async function handleToolCall(
     }
   }
 
+  if (toolName === "add_calendar_event") {
+    const { title, date, startTime, endTime, location, description } = toolInput as {
+      title: string;
+      date: string;
+      startTime: string;
+      endTime: string;
+      location?: string;
+      description?: string;
+    };
+
+    try {
+      const startDateTime = `${date}T${startTime}:00`;
+      let end = endTime;
+      if (!end) {
+        const [h, m] = startTime.split(":").map(Number);
+        const endH = (h + 1) % 24;
+        end = `${String(endH).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+      }
+      const endDateTime = `${date}T${end}:00`;
+
+      const result = await createCalendarEvent(userId, title, startDateTime, endDateTime, location, description);
+      if (!result) {
+        return JSON.stringify({ success: false, error: "Could not create event — Google Calendar may not be connected or authorized." });
+      }
+      return JSON.stringify({ success: true, eventId: result.id, calendarLink: result.htmlLink, title, date, startTime, endTime: end });
+    } catch (e) {
+      return JSON.stringify({ success: false, error: "Failed to create calendar event", detail: String(e) });
+    }
+  }
+
   return JSON.stringify({ error: "Unknown tool" });
 }
 
@@ -1247,10 +1312,11 @@ ${user.email ? `Email: ${user.email}` : "No email saved."}
 ${user.phone ? `Phone: ${user.phone}` : "No phone saved — if needed for checkout, ask and use save_profile."}
 When ${name} says "ship this home", "deliver to my place", or "order to my house" — use their address automatically. When checking out on any site, auto-fill all available info (name, email, phone, address) without asking.
 
-CALENDAR — you have full access to ${name}'s calendar:
+CALENDAR — you have full access to ${name}'s calendar (read AND write):
 - The upcoming 7 days are already loaded above. For anything within this week, just answer from that data.
 - For ANY other date — next week, next month, a specific date — use the check_calendar tool. It pulls from Google Calendar AND any imported calendars (iCloud, Outlook, Yahoo, etc.).
 - When ${name} says "next Tuesday", "July 4th", "this weekend", "am I free tomorrow afternoon", etc. — look it up and give a real answer.
+- To ADD events: use the add_calendar_event tool. When ${name} says "add a meeting", "put that on my calendar", "schedule X on Tuesday at 3pm", etc. — create the event. Extract the title, date (YYYY-MM-DD), start time (HH:MM 24h), and optionally end time, location, and description. If no end time is given, default to 1 hour. Confirm what you added after creating it.
 - Today is ${new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}. Use this to calculate the correct dates for relative references like "next Tuesday" or "this Friday".
 
 HOW TO RESPOND:
