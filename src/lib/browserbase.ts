@@ -943,13 +943,24 @@ export async function completeOpenTableReservation(
   console.error("[OT-API:1] Session created:", sessionId);
 
   try {
-    await page.goto("https://www.opentable.com", { waitUntil: "domcontentloaded", timeout: 30000 });
-    await page.waitForTimeout(3000);
-    console.error("[OT-API:2] OpenTable homepage loaded");
+    try {
+      await page.goto("https://www.opentable.com", { waitUntil: "domcontentloaded", timeout: 20000 });
+    } catch {
+      console.error("[OT-API:2] domcontentloaded timed out, trying commit...");
+      try {
+        await page.goto("https://www.opentable.com", { waitUntil: "commit", timeout: 15000 });
+      } catch {
+        console.error("[OT-API:2] commit also failed, continuing anyway...");
+      }
+    }
+    await page.waitForTimeout(5000);
+    console.error("[OT-API:2] OpenTable page loaded");
 
     // Step 1: Search for the restaurant via Autocomplete GraphQL API
     const searchResult = await page.evaluate(async (query: string) => {
-      const csrfToken = (document.cookie.match(/csrf_token=([^;]+)/) || [])[1] || "";
+      const csrfToken = (document.cookie.match(/csrf_token=([^;]+)/) || [])[1]
+        || (document.querySelector('meta[name="csrf-token"]') as HTMLMetaElement)?.content
+        || "";
       const res = await fetch("/dapi/fe/gql?optype=query&opname=Autocomplete", {
         method: "POST",
         headers: {
@@ -963,22 +974,29 @@ export async function completeOpenTableReservation(
           extensions: { persistedQuery: { version: 1, sha256Hash: "fe1d118abd4c227750693027c2414d43014c2493f64f49bcef5a65274ce9c3c3" } },
         }),
       });
+      if (!res.ok) return { error: `HTTP ${res.status}`, hasCSRF: !!csrfToken } as { error: string; hasCSRF: boolean };
       const data = await res.json();
       const restaurants = data?.data?.autocomplete?.autocompleteRestaurants || [];
       if (restaurants.length === 0) return null;
       const first = restaurants[0];
-      return { id: first.rid, name: first.name };
-    }, restaurantQuery);
+      return { id: first.rid as number, name: first.name as string };
+    }, restaurantQuery) as { id: number; name: string } | { error: string; hasCSRF: boolean } | null;
 
     if (!searchResult) {
       console.error("[OT-API:3] No restaurant found for:", restaurantQuery);
       return { success: false, summary: `Could not find "${restaurantQuery}" on OpenTable`, currentUrl: page.url(), pageTitle: "" };
     }
+    if ("error" in searchResult) {
+      console.error("[OT-API:3] Autocomplete API error:", searchResult.error, "hasCSRF:", searchResult.hasCSRF);
+      return { success: false, summary: `OpenTable API error: ${searchResult.error}`, currentUrl: page.url(), pageTitle: "" };
+    }
     console.error("[OT-API:3] Found restaurant:", searchResult.name, "ID:", searchResult.id);
 
     // Step 2: Get availability via RestaurantsAvailability GraphQL API
     const availability = await page.evaluate(async (args: { rid: number; date: string; time: string; partySize: number }) => {
-      const csrfToken = (document.cookie.match(/csrf_token=([^;]+)/) || [])[1] || "";
+      const csrfToken = (document.cookie.match(/csrf_token=([^;]+)/) || [])[1]
+        || (document.querySelector('meta[name="csrf-token"]') as HTMLMetaElement)?.content
+        || "";
       const res = await fetch("/dapi/fe/gql?optype=query&opname=RestaurantsAvailability", {
         method: "POST",
         headers: {
