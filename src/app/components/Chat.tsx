@@ -139,7 +139,14 @@ export default function Chat({ state }: Props) {
       setTypingStatus("searching restaurants...");
     } else if (lower.match(/menu|what do they have|what's on the menu/)) {
       setTypingStatus("browsing menu...");
-    } else if (lower.match(/buy|book|amazon|purchase|order me/)) {
+    } else if (lower.match(/reserv|table for|dinner at|book.*restaurant|get me.*at\s/)) {
+      setTypingStatus("looking up the restaurant...");
+    } else if (lower.match(/inside|outside|patio|bar seat|no preference|outdoor|indoor/)) {
+      setTypingStatus("booking your table...");
+      setTimeout(() => { if (isTyping) setTypingStatus("navigating the reservation site..."); }, 10000);
+      setTimeout(() => { if (isTyping) setTypingStatus("filling in your details..."); }, 30000);
+      setTimeout(() => { if (isTyping) setTypingStatus("almost there — confirming..."); }, 50000);
+    } else if (lower.match(/buy|amazon|purchase|order me/)) {
       setTypingStatus("searching products...");
     } else if (lower.match(/yes|grab it|do it|go ahead|confirm|place the order|place it|approve/)) {
       setTypingStatus("placing your order...");
