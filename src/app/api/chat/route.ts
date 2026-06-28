@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "@/lib/db";
 import { getSessionUserId } from "@/lib/auth";
-import { fetchTodayEvents, fetchCalendarRange, fetchRecentEmails, createCalendarEvent, CalendarEvent, GmailThread } from "@/lib/google";
+import { fetchTodayEvents, fetchCalendarRange, fetchRecentEmails, createCalendarEvent, deleteCalendarEvent, CalendarEvent, GmailThread } from "@/lib/google";
 async function getBrowserbase() {
   return await import("@/lib/browserbase");
 }
@@ -254,6 +254,25 @@ const SIDEKICK_TOOLS: Anthropic.Tool[] = [
         },
       },
       required: ["title", "date", "startTime"],
+    },
+  },
+  {
+    name: "remove_calendar_event",
+    description:
+      "Remove/delete an event from the user's Google Calendar. Use when the user asks to cancel, remove, or delete a calendar event. First use check_calendar to find the event and get its ID, then call this tool with that ID.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        eventId: {
+          type: "string",
+          description: "The Google Calendar event ID to delete",
+        },
+        title: {
+          type: "string",
+          description: "The event title (for confirmation message)",
+        },
+      },
+      required: ["eventId"],
     },
   },
   {
@@ -901,6 +920,7 @@ async function handleToolCall(
 
       return JSON.stringify({
         events: events.map((e) => ({
+          id: e.id,
           title: e.title,
           start: e.start,
           end: e.end,
@@ -940,6 +960,20 @@ async function handleToolCall(
       return JSON.stringify({ success: true, eventId: result.id, calendarLink: result.htmlLink, title, date, startTime, endTime: end });
     } catch (e) {
       return JSON.stringify({ success: false, error: "Failed to create calendar event", detail: String(e) });
+    }
+  }
+
+  if (toolName === "remove_calendar_event") {
+    const { eventId, title } = toolInput as { eventId: string; title?: string };
+
+    try {
+      const success = await deleteCalendarEvent(userId, eventId);
+      if (!success) {
+        return JSON.stringify({ success: false, error: "Could not delete event — Google Calendar may not be connected or the event was already removed." });
+      }
+      return JSON.stringify({ success: true, deleted: eventId, title: title || "event" });
+    } catch (e) {
+      return JSON.stringify({ success: false, error: "Failed to delete calendar event", detail: String(e) });
     }
   }
 
@@ -1328,6 +1362,7 @@ CALENDAR — you have full access to ${name}'s calendar (read AND write):
 - For ANY other date — next week, next month, a specific date — use the check_calendar tool. It pulls from Google Calendar AND any imported calendars (iCloud, Outlook, Yahoo, etc.).
 - When ${name} says "next Tuesday", "July 4th", "this weekend", "am I free tomorrow afternoon", etc. — look it up and give a real answer.
 - To ADD events: use the add_calendar_event tool. When ${name} says "add a meeting", "put that on my calendar", "schedule X on Tuesday at 3pm", etc. — create the event. Extract the title, date (YYYY-MM-DD), start time (HH:MM 24h), and optionally end time, location, and description. If no end time is given, default to 1 hour. Confirm what you added after creating it.
+- To REMOVE events: first use check_calendar to find the event and get its ID, then use remove_calendar_event with that ID. When ${name} says "cancel my meeting", "remove that event", "delete the dentist appointment", etc. — look up the event, confirm which one they mean if ambiguous, then delete it.
 - Today is ${new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}. Use this to calculate the correct dates for relative references like "next Tuesday" or "this Friday".
 
 HOW TO RESPOND:

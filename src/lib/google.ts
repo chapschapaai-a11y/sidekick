@@ -157,6 +157,29 @@ export async function createCalendarEvent(
   return { id: data.id, htmlLink: data.htmlLink };
 }
 
+export async function deleteCalendarEvent(
+  userId: string,
+  eventId: string,
+): Promise<boolean> {
+  const token = await getGoogleToken(userId);
+  if (!token) return false;
+
+  const res = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/primary/events/${eventId}`,
+    {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+
+  if (!res.ok && res.status !== 404) {
+    const err = await res.text();
+    console.error("[CALENDAR:DELETE] Failed:", res.status, err);
+    return false;
+  }
+  return true;
+}
+
 export interface GmailThread {
   subject: string;
   from: string;
