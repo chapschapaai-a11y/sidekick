@@ -698,33 +698,99 @@ async function handleToolCall(
     };
 
     try {
-      const { findOpenTableAvailability, buildBookingUrl } = await import("@/lib/opentable");
-      const result = await findOpenTableAvailability(restaurant, date, time, partySize);
+      const { searchRestaurant, getAvailabilityScript, buildBookingUrl } = await import("@/lib/opentable");
 
-      if ("error" in result) {
-        return JSON.stringify({ found: false, error: result.error });
+      // Step 1: Direct API search (~1s, no browser needed)
+      console.error("[RESERVATION] Searching for:", restaurant);
+      const found = await searchRestaurant(restaurant);
+      if (!found) {
+        return JSON.stringify({ found: false, error: `Could not find "${restaurant}" on OpenTable` });
       }
+      console.error("[RESERVATION] Found:", found.name, "ID:", found.id);
 
-      const timeFormatted = new Date(`2000-01-01T${time}`).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-      const dateFormatted = new Date(date + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+      // Step 2: Get availability via Browserbase (Akamai blocks server-side calls)
+      const { createBrowserSession } = await getBrowserbase();
+      const { browser, page } = await createBrowserSession();
 
-      const topSlots = result.slots.slice(0, 5).map(s => {
-        const url = buildBookingUrl(result.restaurant.id, s, date, partySize);
-        const fmt = new Date(`2000-01-01T${s.time}`).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-        return { time: fmt, time24: s.time, bookingUrl: url };
-      });
+      try {
+        await page.goto("https://www.opentable.com", { waitUntil: "commit", timeout: 15000 });
+        await page.waitForTimeout(3000);
 
-      return JSON.stringify({
-        found: true,
-        restaurant: result.restaurant.name,
-        restaurantId: result.restaurant.id,
-        platform: "opentable",
-        date: dateFormatted,
-        requestedTime: timeFormatted,
-        partySize,
-        availableSlots: topSlots,
-        _nextStep: "Show the user the available times. Once they pick one (or confirm the closest), call complete_reservation with that slot's bookingUrl. Do NOT show the bookingUrl to the user.",
-      });
+        const availArgs = getAvailabilityScript(found.id, date, time, partySize);
+        const slotsRaw = await page.evaluate(async (args) => {
+          const csrfToken = (window as unknown as Record<string, string>).__CSRF_TOKEN__ || "";
+          const res = await fetch("/dapi/fe/gql?optype=query&opname=RestaurantsAvailability", {
+            method: "POST",
+            headers: { "accept": "*/*", "content-type": "application/json", "x-csrf-token": csrfToken },
+            body: JSON.stringify({
+              operationName: "RestaurantsAvailability",
+              variables: {
+                onlyPop: false, forwardDays: 0, requireTimes: false,
+                requireTypes: ["Standard", "Experience"], privilegedAccess: [],
+                restaurantIds: [args.rid], date: args.date, time: args.time,
+                partySize: args.partySize, databaseRegion: "NA",
+                forwardMinutes: 210, backwardMinutes: 210, loyaltyRedemptionTiers: [],
+              },
+              extensions: { persistedQuery: { version: 1, sha256Hash: args.hash } },
+            }),
+          });
+          if (!res.ok) return { error: `HTTP ${res.status}` };
+          const data = await res.json();
+          const rest = data?.data?.availability?.[0];
+          if (!rest) return { error: "No availability data" };
+          const slots = rest.availabilityDays?.[0]?.slots?.filter((s: { isAvailable: boolean }) => s.isAvailable) || [];
+          return {
+            slots: slots.map((s: { timeOffsetMinutes: number; slotHash: string; slotAvailabilityToken: string; type: string }) => ({
+              offsetMinutes: s.timeOffsetMinutes,
+              slotHash: s.slotHash,
+              token: s.slotAvailabilityToken,
+              type: s.type,
+            })),
+          };
+        }, availArgs);
+
+        if ("error" in slotsRaw) {
+          return JSON.stringify({ found: true, restaurant: found.name, error: slotsRaw.error });
+        }
+
+        if (!slotsRaw.slots || slotsRaw.slots.length === 0) {
+          return JSON.stringify({ found: true, restaurant: found.name, error: `No available times at ${found.name} for ${partySize} on ${date} near ${time}` });
+        }
+
+        // Sort by closest to requested time
+        const sorted = [...slotsRaw.slots].sort((a: { offsetMinutes: number }, b: { offsetMinutes: number }) => Math.abs(a.offsetMinutes) - Math.abs(b.offsetMinutes));
+
+        const timeFormatted = new Date(`2000-01-01T${time}`).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+        const dateFormatted = new Date(date + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+
+        const topSlots = sorted.slice(0, 5).map((s: { offsetMinutes: number; slotHash: string; token: string; type: string }) => {
+          const [reqH, reqM] = time.split(":").map(Number);
+          const totalMinutes = reqH * 60 + reqM + s.offsetMinutes;
+          const slotH = Math.floor(totalMinutes / 60);
+          const slotM = totalMinutes % 60;
+          const slotTime = `${String(slotH).padStart(2, "0")}:${String(slotM).padStart(2, "0")}`;
+          const slot = { time: slotTime, slotHash: s.slotHash, availabilityToken: s.token, type: s.type, offsetMinutes: s.offsetMinutes };
+          const url = buildBookingUrl(found.id, slot, date, partySize);
+          const fmt = new Date(`2000-01-01T${slotTime}`).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+          return { time: fmt, time24: slotTime, bookingUrl: url };
+        });
+
+        console.error("[RESERVATION] Found", topSlots.length, "slots, closest:", topSlots[0]?.time);
+
+        return JSON.stringify({
+          found: true,
+          restaurant: found.name,
+          restaurantId: found.id,
+          platform: "opentable",
+          date: dateFormatted,
+          requestedTime: timeFormatted,
+          partySize,
+          availableSlots: topSlots,
+          _nextStep: "Show the user the available times. Once they pick one (or confirm the closest), call complete_reservation with that slot's bookingUrl. Do NOT show the bookingUrl to the user.",
+        });
+      } finally {
+        await browser.close().catch(() => {});
+      }
     } catch (e) {
       console.error("[RESERVATION] make_reservation error:", e);
       return JSON.stringify({ found: false, error: `Reservation search failed: ${String(e)}` });
