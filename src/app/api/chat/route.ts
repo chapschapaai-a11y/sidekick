@@ -278,7 +278,7 @@ const SIDEKICK_TOOLS: Anthropic.Tool[] = [
   {
     name: "make_reservation",
     description:
-      "Step 1 of 2: Look up a restaurant and prepare reservation data. Returns restaurant info and an internal reservationUrl. IMPORTANT: The reservationUrl is for complete_reservation only — NEVER show it to the user as a link. After this returns, ask the user about seating preference, then call complete_reservation (step 2) to actually book.",
+      "Look up a restaurant on OpenTable and check availability. Returns available time slots. This is FAST (a few seconds). After getting results, confirm the time with the user, then call complete_reservation to book it.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -305,13 +305,13 @@ const SIDEKICK_TOOLS: Anthropic.Tool[] = [
   {
     name: "complete_reservation",
     description:
-      "Actually complete a restaurant reservation using browser automation. Opens OpenTable/Resy in a real browser, selects the time slot, fills in the user's info, and confirms the booking. Call this AFTER make_reservation and AFTER the user confirms details (seating preference, etc.). Takes 30-60 seconds.",
+      "Complete an OpenTable reservation. Uses the bookingUrl from make_reservation to open the booking form, fill in the user's details, and confirm. Takes about 20 seconds. Call AFTER the user confirms the time slot.",
     input_schema: {
       type: "object" as const,
       properties: {
-        reservationUrl: {
+        bookingUrl: {
           type: "string",
-          description: "The OpenTable or Resy URL from make_reservation results",
+          description: "The bookingUrl from make_reservation results",
         },
         restaurantName: {
           type: "string",
@@ -319,22 +319,18 @@ const SIDEKICK_TOOLS: Anthropic.Tool[] = [
         },
         date: {
           type: "string",
-          description: "Reservation date (e.g. 'Thursday, June 25')",
+          description: "Reservation date in YYYY-MM-DD format",
         },
         time: {
           type: "string",
-          description: "Desired time (e.g. '7:00 PM')",
+          description: "Selected time slot (e.g. '19:00')",
         },
         partySize: {
           type: "number",
           description: "Number of guests",
         },
-        seatingPreference: {
-          type: "string",
-          description: "Seating preference if any (e.g. 'indoor', 'outdoor', 'bar', 'patio'). Leave empty if not specified.",
-        },
       },
-      required: ["reservationUrl", "restaurantName", "time", "partySize"],
+      required: ["bookingUrl", "restaurantName", "time", "partySize"],
     },
   },
 ];
@@ -700,195 +696,173 @@ async function handleToolCall(
       time: string;
       partySize: number;
     };
-    const q = restaurant.toLowerCase().trim();
 
-    const salemRestaurants: Record<string, {
-      name: string;
-      platform: "opentable" | "resy" | "direct";
-      slug: string;
-      cuisine: string;
-      priceRange: string;
-      address: string;
-      directUrl?: string;
-    }> = {
-      ledger: { name: "Ledger Restaurant & Bar", platform: "opentable", slug: "ledger-restaurant-and-bar-salem", cuisine: "New American", priceRange: "$$$", address: "125 Washington St, Salem, MA" },
-      bambolina: { name: "Bambolina", platform: "opentable", slug: "bambolina-salem", cuisine: "Italian, Wood-Fired Pizza", priceRange: "$$", address: "288 Derby St, Salem, MA" },
-      settler: { name: "Settler", platform: "resy", slug: "settler", cuisine: "New American, Cocktail Bar", priceRange: "$$$", address: "3 Lynde St, Salem, MA" },
-      bernadette: { name: "Bernadette", platform: "resy", slug: "bernadette", cuisine: "French Bistro", priceRange: "$$$", address: "264 Essex St, Salem, MA" },
-      adriatic: { name: "Adriatic Restaurant & Bar", platform: "opentable", slug: "adriatic-restaurant-and-bar-salem", cuisine: "Mediterranean, European", priceRange: "$$$", address: "155 Washington St, Salem, MA" },
-      "turner's seafood": { name: "Turner's Seafood", platform: "opentable", slug: "turners-seafood-at-lyceum-hall-salem", cuisine: "Seafood", priceRange: "$$$", address: "43 Church St, Salem, MA" },
-      turners: { name: "Turner's Seafood", platform: "opentable", slug: "turners-seafood-at-lyceum-hall-salem", cuisine: "Seafood", priceRange: "$$$", address: "43 Church St, Salem, MA" },
-      "sea level": { name: "Sea Level Oyster Bar", platform: "opentable", slug: "sea-level-oyster-bar-salem", cuisine: "Seafood, Raw Bar", priceRange: "$$$", address: "94 Wharf St, Salem, MA" },
-      "sea level oyster bar": { name: "Sea Level Oyster Bar", platform: "opentable", slug: "sea-level-oyster-bar-salem", cuisine: "Seafood, Raw Bar", priceRange: "$$$", address: "94 Wharf St, Salem, MA" },
-      finz: { name: "Finz Seafood & Grill", platform: "opentable", slug: "finz-seafood-and-grill-salem", cuisine: "Seafood", priceRange: "$$$", address: "76 Wharf St, Salem, MA" },
-      "mercy tavern": { name: "Mercy Tavern", platform: "opentable", slug: "mercy-tavern-salem", cuisine: "American, Pub", priceRange: "$$", address: "148 Derby St, Salem, MA" },
-      "life alive": { name: "Life Alive", platform: "direct", slug: "life-alive-salem", cuisine: "Organic, Plant-Based", priceRange: "$$", address: "261 Essex St, Salem, MA", directUrl: "https://www.lifealive.com/salem" },
-      "howling wolf": { name: "Howling Wolf Taqueria", platform: "direct", slug: "howling-wolf", cuisine: "Mexican", priceRange: "$", address: "76 Lafayette St, Salem, MA", directUrl: "https://www.howlingwolftaqueria.com" },
-      "flying saucer": { name: "Flying Saucer Pizza", platform: "direct", slug: "flying-saucer", cuisine: "Pizza", priceRange: "$", address: "118 Washington St, Salem, MA", directUrl: "https://www.flyingsaucerpizza.com" },
-      "bit bar": { name: "Bit Bar", platform: "direct", slug: "bit-bar", cuisine: "American, Arcade Bar", priceRange: "$$", address: "50 St. Peter St, Salem, MA", directUrl: "https://www.bitbarsalem.com" },
-      "notch brewing": { name: "Notch Brewing", platform: "direct", slug: "notch-brewing", cuisine: "Brewery, Beer Garden", priceRange: "$$", address: "283 Derby St, Salem, MA", directUrl: "https://www.notchbrewing.com" },
-    };
+    try {
+      const { findOpenTableAvailability, buildBookingUrl } = await import("@/lib/opentable");
+      const result = await findOpenTableAvailability(restaurant, date, time, partySize);
 
-    const match = Object.keys(salemRestaurants).find(k => q.includes(k));
-
-    if (match) {
-      const r = salemRestaurants[match];
-      let reservationUrl: string;
-      let platform = r.platform;
-
-      if (r.platform === "resy") {
-        reservationUrl = `https://resy.com/cities/salem-ma/venues/${r.slug}?date=${date}&seats=${partySize}`;
-      } else if (r.platform === "opentable") {
-        reservationUrl = `https://www.opentable.com/r/${r.slug}?covers=${partySize}&dateTime=${date}T${time}`;
-      } else {
-        reservationUrl = r.directUrl || `https://www.google.com/search?q=${encodeURIComponent(r.name + " Salem MA reservations")}`;
+      if ("error" in result) {
+        return JSON.stringify({ found: false, error: result.error });
       }
 
       const timeFormatted = new Date(`2000-01-01T${time}`).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
       const dateFormatted = new Date(date + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
 
+      const topSlots = result.slots.slice(0, 5).map(s => {
+        const url = buildBookingUrl(result.restaurant.id, s, date, partySize);
+        const fmt = new Date(`2000-01-01T${s.time}`).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+        return { time: fmt, time24: s.time, bookingUrl: url };
+      });
+
       return JSON.stringify({
         found: true,
-        restaurant: r.name,
-        cuisine: r.cuisine,
-        priceRange: r.priceRange,
-        address: r.address,
-        platform,
+        restaurant: result.restaurant.name,
+        restaurantId: result.restaurant.id,
+        platform: "opentable",
         date: dateFormatted,
-        time: timeFormatted,
+        requestedTime: timeFormatted,
         partySize,
-        reservationUrl,
-        _nextStep: "Ask user about seating preference (inside/outside/bar/no preference), then call complete_reservation with the reservationUrl above. Do NOT show the reservationUrl to the user as a link.",
+        availableSlots: topSlots,
+        _nextStep: "Show the user the available times. Once they pick one (or confirm the closest), call complete_reservation with that slot's bookingUrl. Do NOT show the bookingUrl to the user.",
       });
+    } catch (e) {
+      console.error("[RESERVATION] make_reservation error:", e);
+      return JSON.stringify({ found: false, error: `Reservation search failed: ${String(e)}` });
     }
-
-    // Restaurant not in local database — use OpenTable API search (works for any restaurant worldwide)
-    const reservationUrl = `https://www.opentable.com/r/unknown?covers=${partySize}&dateTime=${date}T${time}`;
-    const timeFormatted = new Date(`2000-01-01T${time}`).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-    const dateFormatted = new Date(date + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
-    return JSON.stringify({
-      found: true,
-      restaurant,
-      platform: "opentable",
-      date: dateFormatted,
-      time: timeFormatted,
-      partySize,
-      reservationUrl,
-      _nextStep: "Ask user about seating preference (inside/outside/bar/no preference), then call complete_reservation with the reservationUrl above. Do NOT show the reservationUrl to the user as a link.",
-    });
   }
 
   if (toolName === "complete_reservation") {
-    const { reservationUrl, restaurantName, time, partySize, seatingPreference } = toolInput as {
-      reservationUrl: string;
+    const { bookingUrl, restaurantName, time, partySize } = toolInput as {
+      bookingUrl: string;
       restaurantName: string;
       date?: string;
       time: string;
       partySize: number;
-      seatingPreference?: string;
     };
     try {
-      console.error("[RESERVATION:1] complete_reservation called", JSON.stringify({ restaurantName, reservationUrl, time, partySize, seatingPreference }));
-      const { browseWebsite } = await getBrowserbase();
-      console.error("[RESERVATION:2] browserbase module imported");
+      console.error("[RESERVATION:1] complete_reservation called", JSON.stringify({ restaurantName, bookingUrl: bookingUrl?.slice(0, 80), time, partySize }));
+
       const user = await prisma.user.findUnique({ where: { id: userId } });
-      console.error("[RESERVATION:3] user loaded", JSON.stringify({ name: user?.name, email: user?.email, phone: user?.phone ? "yes" : "no" }));
       const firstName = user?.name?.split(" ")[0] || "Guest";
       const lastName = user?.name?.split(" ").slice(1).join(" ") || "";
       const email = user?.email || "";
       const phone = user?.phone || "";
 
-      let cardDetails: { number: string; expMonth: number; expYear: number; cvc: string } | undefined;
-      const wallet = await prisma.wallet.findUnique({ where: { userId } });
-      if (wallet?.virtualCardReady && wallet.stripeCardId) {
-        try {
-          const { getVirtualCardDetails } = await import("@/lib/stripe");
-          const card = await getVirtualCardDetails(wallet.stripeCardId);
-          cardDetails = { number: card.number, expMonth: card.expMonth, expYear: card.expYear, cvc: card.cvc };
-        } catch {
-          // Card details unavailable
+      if (!email) {
+        return JSON.stringify({ success: false, error: "No email on file — update your profile first" });
+      }
+
+      const { createBrowserSession } = await getBrowserbase();
+      const { browser, page } = await createBrowserSession();
+      console.error("[RESERVATION:2] Browser session created");
+
+      try {
+        // Navigate directly to the booking details page (skips seating options)
+        await page.goto(bookingUrl, { waitUntil: "domcontentloaded", timeout: 25000 });
+        await page.waitForTimeout(3000);
+        console.error("[RESERVATION:3] Booking page loaded:", page.url());
+
+        // Fill in the form fields using common OpenTable selectors
+        const fillField = async (selectors: string[], value: string, label: string) => {
+          for (const sel of selectors) {
+            try {
+              const el = page.locator(sel).first();
+              if (await el.isVisible({ timeout: 1000 })) {
+                await el.fill(value);
+                console.error(`[RESERVATION:FILL] ${label}: OK`);
+                return true;
+              }
+            } catch { /* try next selector */ }
+          }
+          console.error(`[RESERVATION:FILL] ${label}: not found`);
+          return false;
+        };
+
+        await fillField(
+          ['input[name="firstName"]', 'input[data-test="first-name"]', 'input[placeholder*="First"]', '#firstName'],
+          firstName, "firstName"
+        );
+        await fillField(
+          ['input[name="lastName"]', 'input[data-test="last-name"]', 'input[placeholder*="Last"]', '#lastName'],
+          lastName, "lastName"
+        );
+        await fillField(
+          ['input[name="email"]', 'input[data-test="email"]', 'input[type="email"]', '#email'],
+          email, "email"
+        );
+        await fillField(
+          ['input[name="phone"]', 'input[data-test="phone-number"]', 'input[type="tel"]', '#phoneNumber'],
+          phone, "phone"
+        );
+
+        // Uncheck marketing/opt-in checkboxes
+        const checkboxes = await page.locator('input[type="checkbox"]:checked').all();
+        for (const cb of checkboxes) {
+          try {
+            const label = await cb.evaluate((el) => {
+              const lbl = el.closest("label")?.textContent || el.getAttribute("name") || "";
+              return lbl.toLowerCase();
+            });
+            if (label.includes("opt") || label.includes("market") || label.includes("email") || label.includes("text") || label.includes("sms")) {
+              await cb.uncheck();
+              console.error("[RESERVATION:UNCHECK] Unchecked marketing checkbox");
+            }
+          } catch { /* skip */ }
         }
-      }
 
-      const seatingInstruction = seatingPreference
-        ? `If there is a seating preference option (indoor/outdoor/bar/patio), select "${seatingPreference}". `
-        : "";
+        // Click the submit button
+        const submitSelectors = [
+          'button[data-test="complete-reservation"]',
+          'button:has-text("Complete reservation")',
+          'button:has-text("Complete Reservation")',
+          'button[type="submit"]',
+        ];
+        let submitted = false;
+        for (const sel of submitSelectors) {
+          try {
+            const btn = page.locator(sel).first();
+            if (await btn.isVisible({ timeout: 1000 })) {
+              await btn.click();
+              submitted = true;
+              console.error("[RESERVATION:4] Clicked submit button");
+              break;
+            }
+          } catch { /* try next */ }
+        }
 
-      const cardInstruction = cardDetails
-        ? `If a credit card is required, use: Card number ${cardDetails.number}, Exp ${String(cardDetails.expMonth).padStart(2, "0")}/${cardDetails.expYear}, CVC ${cardDetails.cvc}. `
-        : "";
-
-      console.error("[RESERVATION:4] Starting reservation for", restaurantName);
-
-      const isOpenTable = reservationUrl.includes("opentable.com");
-      const reservationDate = (toolInput as Record<string, unknown>).date as string || new Date().toISOString().split("T")[0];
-
-      let result: Awaited<ReturnType<typeof browseWebsite>>;
-
-      if (isOpenTable) {
-        // Use API-based approach: GraphQL search → availability → direct booking URL
-        const { completeOpenTableReservation } = await getBrowserbase();
-        console.error("[RESERVATION:4a] Using OpenTable API approach");
-        result = await completeOpenTableReservation(
-          restaurantName,
-          reservationDate,
-          time,
-          partySize,
-          { firstName, lastName, email, phone },
-          seatingPreference,
-        );
-      } else {
-        const dateObj = new Date(reservationDate + "T12:00:00");
-        const dateFormatted = dateObj.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
-        result = await browseWebsite(
-          reservationUrl,
-          `Complete a restaurant reservation. Follow these steps EXACTLY:\n` +
-          `1. The page should show ${restaurantName} with ${partySize} people.\n` +
-          `2. Look for available time slots near ${time}. Click on the time slot closest to ${time}.\n` +
-          `3. ${seatingInstruction}If there is a seating preference dropdown or option and no preference was specified, leave it as the default.\n` +
-          `4. You should reach a form asking for diner details. Fill in:\n` +
-          `   - First name: ${firstName}\n` +
-          `   - Last name: ${lastName}\n` +
-          `   - Email: ${email}\n` +
-          `   - Phone: ${phone}\n` +
-          `5. ${cardInstruction}\n` +
-          `6. If there are any special requests or notes fields, leave them empty.\n` +
-          `7. Review the reservation details, then click the final "Complete reservation" or "Confirm" button.\n` +
-          `8. After clicking confirm, wait for the confirmation page to load.\n` +
-          `9. Return "done" with: CONFIRMED: [restaurant name] | DATE: [date] | TIME: [time selected] | PARTY: [number] | CONFIRMATION: [any confirmation number shown]\n` +
-          `If you cannot complete the reservation (no times available, error, etc.), return: FAILED: [reason]\n` +
-          `IMPORTANT: Do NOT stop before clicking the final confirm button. Complete the entire booking.`,
-          { name: user?.name || "", email, phone, address: user?.homeAddress || "" },
-          undefined,
-          undefined,
-          { allowFinalSubmit: true }
-        );
-      }
-
-      console.error("[RESERVATION:5] browseWebsite returned", JSON.stringify({ success: result.success, summary: result.summary, error: result.error, url: result.currentUrl }));
-      if (result.success && result.summary) {
-        const confirmed = result.summary.includes("CONFIRMED");
-        const timeMatch = result.summary.match(/TIME:\s*(.+?)(?:\s*\||$)/i);
-        const confMatch = result.summary.match(/CONFIRMATION:\s*(.+?)(?:\s*\||$)/i);
-
-        if (confirmed) {
+        if (!submitted) {
+          console.error("[RESERVATION:4] Could not find submit button");
           return JSON.stringify({
-            success: true,
+            success: false,
             restaurant: restaurantName,
-            timeBooked: timeMatch ? timeMatch[1].trim() : time,
-            partySize,
-            confirmationNumber: confMatch ? confMatch[1].trim() : null,
-            summary: result.summary,
+            error: "Could not find the submit button on the booking page",
           });
         }
-      }
 
-      return JSON.stringify({
-        success: false,
-        restaurant: restaurantName,
-        error: result.summary || "Could not complete the reservation",
-        fallbackUrl: reservationUrl,
-      });
+        // Wait for confirmation page
+        await page.waitForTimeout(5000);
+        const finalUrl = page.url();
+        const pageText = await page.locator("body").textContent({ timeout: 5000 }).catch(() => "") || "";
+        const isConfirmed = finalUrl.includes("confirmation") ||
+          pageText.toLowerCase().includes("reservation confirmed") ||
+          pageText.toLowerCase().includes("you're all set") ||
+          pageText.toLowerCase().includes("booking confirmed");
+
+        console.error("[RESERVATION:5] Final URL:", finalUrl, "Confirmed:", isConfirmed);
+
+        const confMatch = pageText.match(/confirmation\s*#?\s*:?\s*(\w+)/i);
+
+        return JSON.stringify({
+          success: isConfirmed,
+          restaurant: restaurantName,
+          time,
+          partySize,
+          confirmationNumber: confMatch ? confMatch[1] : null,
+          ...(isConfirmed ? {} : { error: "Booking may not have completed — check OpenTable for confirmation" }),
+        });
+      } finally {
+        await browser.close().catch(() => {});
+      }
     } catch (e) {
       console.error("[RESERVATION:ERROR] complete_reservation threw:", String(e), (e as Error)?.stack);
       return JSON.stringify({
@@ -896,7 +870,6 @@ async function handleToolCall(
         restaurant: restaurantName,
         error: "Reservation booking failed",
         detail: String(e),
-        fallbackUrl: reservationUrl,
       });
     }
   }
@@ -1312,19 +1285,16 @@ CRITICAL RULES for food orders:
 RESTAURANT RESERVATIONS — you book the table, ${name} just shows up:
 When ${name} asks to make a reservation, get a table, book a spot, or anything involving dining out at a sit-down restaurant:
 1. ALWAYS call make_reservation first. Today is ${new Date().toISOString().split("T")[0]}. Convert relative dates ("tomorrow" = next day, "this Friday" = upcoming Friday) to YYYY-MM-DD. Convert times to 24-hour (7pm → 19:00). Default party of 2.
-2. After make_reservation returns, confirm details and ask seating preference. DO NOT show the reservationUrl as a link. Example:
-   "booking **Ledger** for **2** tomorrow at **7pm** — do you have a seating preference? inside, outside, bar?"
-3. Once ${name} confirms or specifies a preference, you MUST call complete_reservation. Pass it the reservationUrl from make_reservation. Say "on it, booking now — give me about 30 seconds..."
-4. On success: "you're all set! **Ledger**, Thursday June 25 at 7:00 PM, party of 2. just show up and enjoy."
-5. On failure: "couldn't finish the booking automatically — [tap here to complete it](fallbackUrl)"
+2. make_reservation returns available time slots in a few seconds. Confirm the best slot with the user:
+   "**Ledger** has a table for **2** tomorrow at **6:00 PM** — want me to book it?"
+3. Once ${name} confirms, call complete_reservation with the bookingUrl from the slot they picked. Say "on it, booking now..."
+4. On success: "you're all set! **Ledger**, Thursday June 25 at 6:00 PM, party of 2. just show up and enjoy."
+5. On failure: tell them what happened and offer to try a different time.
 
 ABSOLUTE RULES — NEVER BREAK THESE:
-- NEVER present a link or URL to the user for reservations. You book it FOR them using complete_reservation.
-- NEVER say "tap here", "click here", "here's your link", or "book your table" with a URL. That defeats the entire purpose.
-- NEVER skip complete_reservation. When the user says "go ahead", "book it", "inside please", or confirms in any way, you MUST call complete_reservation.
-- The reservationUrl from make_reservation is INTERNAL — it goes to complete_reservation, not to the user.
-- complete_reservation takes 30-60 seconds (browser automation). Warn them to wait.
-- The virtual card from their wallet is used automatically if needed.
+- NEVER present a link or URL to the user. You book it FOR them.
+- NEVER skip complete_reservation. When the user confirms, you MUST call it.
+- The bookingUrl from make_reservation is INTERNAL — it goes to complete_reservation, not to the user.
 - The goal: ${name} says what they want → you handle EVERYTHING → they just show up.
 
 RIDESHARE FLOW — you can find and pay for rides for ${name}:
