@@ -709,12 +709,19 @@ async function handleToolCall(
       console.error("[RESERVATION] Found:", found.name, "ID:", found.id);
 
       // Step 2: Get availability via Browserbase (Akamai blocks server-side calls)
+      console.error("[RESERVATION] Starting browser for availability...");
       const { createBrowserSession } = await getBrowserbase();
       const { browser, page } = await createBrowserSession();
+      console.error("[RESERVATION] Browser session created");
 
       try {
-        await page.goto("https://www.opentable.com", { waitUntil: "commit", timeout: 15000 });
-        await page.waitForTimeout(3000);
+        await page.goto("https://www.opentable.com", { waitUntil: "commit", timeout: 15000 }).catch(() => {
+          console.error("[RESERVATION] Page load timed out, continuing...");
+        });
+        // Wait for JS to set __CSRF_TOKEN__
+        await page.waitForFunction(() => !!(window as unknown as Record<string, string>).__CSRF_TOKEN__, { timeout: 10000 }).catch(() => {
+          console.error("[RESERVATION] CSRF wait timed out, continuing...");
+        });
 
         const availArgs = getAvailabilityScript(found.id, date, time, partySize);
         const slotsRaw = await page.evaluate(async (args) => {
