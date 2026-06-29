@@ -1115,10 +1115,11 @@ ${weather ? `\nWEATHER RIGHT NOW (${weather.location}):
 ${weather.temperature}°F, ${weather.condition}. High ${weather.high}°, low ${weather.low}°. Feels like ${weather.feelsLike}°.${weather.uvIndex >= 6 ? ` UV index is high (${weather.uvIndex}) — recommend sunscreen.` : ""}
 ${weather.forecast.length > 1 ? `\nFORECAST:\n${weather.forecast.map((f) => `- ${f.day}: ${f.condition}, high ${f.high}°, low ${f.low}°${f.rainChance > 20 ? ` (${f.rainChance}% rain)` : ""}`).join("\n")}` : ""}` : ""}
 ${calendarEvents.length > 0 ? `\nUPCOMING SCHEDULE (next 7 days):\n${calendarEvents.map((e) => {
-    const dayLabel = new Date(e.start).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+    const tz = "America/New_York";
+    const dayLabel = new Date(e.start).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: tz });
     if (e.allDay) return `- ${dayLabel}: ${e.title} (all day)${e.location ? ` @ ${e.location}` : ""}`;
-    const startTime = new Date(e.start).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-    const endTime = new Date(e.end).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+    const startTime = new Date(e.start).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz });
+    const endTime = new Date(e.end).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz });
     return `- ${dayLabel} ${startTime}–${endTime}: ${e.title}${e.location ? ` @ ${e.location}` : ""}`;
   }).join("\n")}` : "\nNo calendar connected yet — or no events this week."}
 ${emails.length > 0 ? `\nRECENT EMAILS:\n${emails.map((e) => `- ${e.unread ? "🔴 " : ""}${e.subject} — from ${e.from}${e.unread ? " (UNREAD)" : ""}`).join("\n")}` : ""}

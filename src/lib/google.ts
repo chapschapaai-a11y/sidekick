@@ -76,22 +76,43 @@ export async function fetchCalendarRange(
     maxResults: "50",
   });
 
-  const res = await fetch(
-    `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`,
+  // Fetch all calendars the user has (primary + subscribed)
+  const calListRes = await fetch(
+    "https://www.googleapis.com/calendar/v3/users/me/calendarList",
     { headers: { Authorization: `Bearer ${token}` } }
   );
 
-  if (!res.ok) return [];
+  let calendarIds = ["primary"];
+  if (calListRes.ok) {
+    const calListData = await calListRes.json();
+    const items = calListData.items || [];
+    calendarIds = items
+      .filter((c: Record<string, unknown>) => !c.deleted && c.selected !== false)
+      .map((c: Record<string, unknown>) => c.id as string);
+    if (calendarIds.length === 0) calendarIds = ["primary"];
+    console.error("[CALENDAR] Fetching from", calendarIds.length, "calendars");
+  }
 
-  const data = await res.json();
-  const googleEvents: CalendarEvent[] = (data.items || []).map((e: Record<string, unknown>) => ({
-    id: e.id as string,
-    title: (e.summary as string) || "Untitled",
-    start: ((e.start as Record<string, string>)?.dateTime || (e.start as Record<string, string>)?.date) as string,
-    end: ((e.end as Record<string, string>)?.dateTime || (e.end as Record<string, string>)?.date) as string,
-    location: (e.location as string) || undefined,
-    allDay: !!(e.start as Record<string, string>)?.date,
-  }));
+  // Fetch events from all calendars in parallel
+  const allFetches = calendarIds.map(async (calId) => {
+    const res = await fetch(
+      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calId)}/events?${params}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.items || []).map((e: Record<string, unknown>) => ({
+      id: e.id as string,
+      title: (e.summary as string) || "Untitled",
+      start: ((e.start as Record<string, string>)?.dateTime || (e.start as Record<string, string>)?.date) as string,
+      end: ((e.end as Record<string, string>)?.dateTime || (e.end as Record<string, string>)?.date) as string,
+      location: (e.location as string) || undefined,
+      allDay: !!(e.start as Record<string, string>)?.date,
+    })) as CalendarEvent[];
+  });
+
+  const results = await Promise.all(allFetches);
+  const googleEvents: CalendarEvent[] = results.flat();
 
   // Also fetch ICS subscription events for this range
   const subs = await prisma.calendarSubscription.findMany({ where: { userId } });
