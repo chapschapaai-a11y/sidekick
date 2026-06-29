@@ -160,9 +160,11 @@ export async function createCalendarEvent(
 export async function deleteCalendarEvent(
   userId: string,
   eventId: string,
-): Promise<boolean> {
+): Promise<{ success: boolean; error?: string }> {
   const token = await getGoogleToken(userId);
-  if (!token) return false;
+  if (!token) return { success: false, error: "Google Calendar not connected" };
+
+  console.error("[CALENDAR:DELETE] Attempting to delete event:", eventId);
 
   const res = await fetch(
     `https://www.googleapis.com/calendar/v3/calendars/primary/events/${eventId}`,
@@ -172,12 +174,25 @@ export async function deleteCalendarEvent(
     },
   );
 
-  if (!res.ok && res.status !== 404) {
-    const err = await res.text();
-    console.error("[CALENDAR:DELETE] Failed:", res.status, err);
-    return false;
+  if (res.status === 204 || res.status === 200) {
+    console.error("[CALENDAR:DELETE] Success:", eventId);
+    return { success: true };
   }
-  return true;
+
+  if (res.status === 404) {
+    console.error("[CALENDAR:DELETE] Event not found:", eventId);
+    return { success: false, error: "Event not found — it may have already been deleted" };
+  }
+
+  if (res.status === 403) {
+    const err = await res.text();
+    console.error("[CALENDAR:DELETE] Permission denied:", err);
+    return { success: false, error: "Permission denied — try disconnecting and reconnecting Google in the app to grant calendar write access" };
+  }
+
+  const err = await res.text();
+  console.error("[CALENDAR:DELETE] Failed:", res.status, err);
+  return { success: false, error: `Google Calendar returned error ${res.status}` };
 }
 
 export interface GmailThread {

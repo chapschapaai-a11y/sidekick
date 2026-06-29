@@ -816,9 +816,9 @@ async function handleToolCall(
     const { eventId, title } = toolInput as { eventId: string; title?: string };
 
     try {
-      const success = await deleteCalendarEvent(userId, eventId);
-      if (!success) {
-        return JSON.stringify({ success: false, error: "Could not delete event — Google Calendar may not be connected or the event was already removed." });
+      const result = await deleteCalendarEvent(userId, eventId);
+      if (!result.success) {
+        return JSON.stringify({ success: false, error: result.error || "Could not delete event" });
       }
       return JSON.stringify({ success: true, deleted: eventId, title: title || "event" });
     } catch (e) {
