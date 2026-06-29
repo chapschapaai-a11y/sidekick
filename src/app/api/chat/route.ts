@@ -278,7 +278,7 @@ const SIDEKICK_TOOLS: Anthropic.Tool[] = [
   {
     name: "make_reservation",
     description:
-      "Search for a restaurant on OpenTable and get its ID. This is FAST (a few seconds). Returns the restaurant name and a seatingUrl. Confirm details with the user, then call complete_reservation with the seatingUrl to book.",
+      "Search for a restaurant on OpenTable and find availability. Returns the restaurant name, available seating options, and a direct booking link. FAST (~15 seconds).",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -305,36 +305,13 @@ const SIDEKICK_TOOLS: Anthropic.Tool[] = [
   {
     name: "complete_reservation",
     description:
-      "Complete an OpenTable reservation. Opens the seating page, selects a seating option, fills in diner details, and confirms. Takes about 30 seconds. Call AFTER the user confirms.",
+      "DEPRECATED — do not call. Reservations are completed by the user via the booking link from make_reservation.",
     input_schema: {
       type: "object" as const,
       properties: {
-        seatingUrl: {
-          type: "string",
-          description: "The seatingUrl from make_reservation results",
-        },
-        restaurantName: {
-          type: "string",
-          description: "Restaurant name for confirmation",
-        },
-        date: {
-          type: "string",
-          description: "Reservation date",
-        },
-        time: {
-          type: "string",
-          description: "Desired time",
-        },
-        partySize: {
-          type: "number",
-          description: "Number of guests",
-        },
-        seatingPreference: {
-          type: "string",
-          description: "Seating preference (e.g. 'inside', 'outdoor', 'patio', 'bar'). Leave empty for first available.",
-        },
+        note: { type: "string" },
       },
-      required: ["seatingUrl", "restaurantName", "time", "partySize"],
+      required: [],
     },
   },
 ];
@@ -711,10 +688,39 @@ async function handleToolCall(
       }
 
       const seatingUrl = buildSeatingUrl(found.id, date, time, partySize);
+      console.error("[RESERVATION] Found:", found.name, "ID:", found.id);
+
+      // Use Browserbase to load the seating page and get real options
+      let seatingOptions: string[] = [];
+      try {
+        const { createBrowserSession } = await getBrowserbase();
+        const { browser, page } = await createBrowserSession();
+        try {
+          await page.goto(seatingUrl, { waitUntil: "domcontentloaded", timeout: 20000 });
+          await page.waitForTimeout(2000);
+
+          const bodyText = await page.locator("body").textContent({ timeout: 3000 }).catch(() => "") || "";
+          if (bodyText.includes("Access Denied")) {
+            console.error("[RESERVATION] Seating page blocked by Akamai");
+          } else {
+            const options = await page.locator('button:has-text("Select"), a:has-text("Select")').evaluateAll((btns: Element[]) =>
+              btns.map(btn => {
+                const container = btn.closest("[class]")?.parentElement;
+                return container?.textContent?.replace(/Select$/i, "").replace(/\s+/g, " ").trim() || "";
+              }).filter(Boolean)
+            );
+            seatingOptions = options;
+            console.error("[RESERVATION] Seating options:", options);
+          }
+        } finally {
+          await browser.close().catch(() => {});
+        }
+      } catch (e) {
+        console.error("[RESERVATION] Browser check failed:", e);
+      }
+
       const timeFormatted = new Date(`2000-01-01T${time}`).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
       const dateFormatted = new Date(date + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
-
-      console.error("[RESERVATION] Found:", found.name, "ID:", found.id);
 
       return JSON.stringify({
         found: true,
@@ -724,8 +730,9 @@ async function handleToolCall(
         date: dateFormatted,
         time: timeFormatted,
         partySize,
-        seatingUrl,
-        _nextStep: "Confirm with the user: restaurant, date, time, party size. Once they confirm, call complete_reservation with the seatingUrl. Do NOT show the URL to the user.",
+        seatingOptions: seatingOptions.length > 0 ? seatingOptions : undefined,
+        bookingLink: seatingUrl,
+        _nextStep: "Tell the user you found availability. Show the seating options if any. Give them the booking link so they can complete the reservation on OpenTable (they need to be signed in). Format: 'here's your link to book: [Book on OpenTable](url)'",
       });
     } catch (e) {
       console.error("[RESERVATION] make_reservation error:", e);
@@ -734,189 +741,7 @@ async function handleToolCall(
   }
 
   if (toolName === "complete_reservation") {
-    const { seatingUrl, restaurantName, time, partySize, seatingPreference } = toolInput as {
-      seatingUrl: string;
-      restaurantName: string;
-      date?: string;
-      time: string;
-      partySize: number;
-      seatingPreference?: string;
-    };
-    try {
-      console.error("[RESERVATION:1] complete_reservation called", JSON.stringify({ restaurantName, seatingUrl: seatingUrl?.slice(0, 80), time, partySize }));
-
-      const user = await prisma.user.findUnique({ where: { id: userId } });
-      const firstName = user?.name?.split(" ")[0] || "Guest";
-      const lastName = user?.name?.split(" ").slice(1).join(" ") || "";
-      const email = user?.email || "";
-      const phone = user?.phone || "";
-
-      if (!email) {
-        return JSON.stringify({ success: false, error: "No email on file — update your profile first" });
-      }
-
-      const { createBrowserSession } = await getBrowserbase();
-      const { browser, page } = await createBrowserSession();
-      console.error("[RESERVATION:2] Browser session created");
-
-      try {
-        // Step 1: Go to the seating-options page
-        await page.goto(seatingUrl, { waitUntil: "domcontentloaded", timeout: 25000 });
-        await page.waitForTimeout(2000);
-        console.error("[RESERVATION:3] Seating page loaded:", page.url());
-
-        // Check for "Access Denied"
-        const bodyText = await page.locator("body").textContent({ timeout: 3000 }).catch(() => "") || "";
-        if (bodyText.includes("Access Denied")) {
-          return JSON.stringify({ success: false, restaurant: restaurantName, error: "OpenTable blocked the request. Try again in a moment." });
-        }
-
-        // Step 2: Select a seating option
-        // Look for "Select" buttons next to seating descriptions
-        const selectButtons = page.locator('button:has-text("Select"), a:has-text("Select")');
-        const buttonCount = await selectButtons.count();
-        console.error("[RESERVATION:3b] Found", buttonCount, "Select buttons");
-
-        if (buttonCount === 0) {
-          // Maybe it went straight to the details form (no seating choices)
-          const hasForm = await page.locator('input[name="firstName"], input[data-test="first-name"]').count();
-          if (hasForm === 0) {
-            return JSON.stringify({ success: false, restaurant: restaurantName, error: `No availability at ${restaurantName} for ${partySize} at ${time}` });
-          }
-        } else {
-          // Try to match seating preference if given
-          let clicked = false;
-          if (seatingPreference) {
-            const prefLower = seatingPreference.toLowerCase();
-            for (let i = 0; i < buttonCount; i++) {
-              const parent = selectButtons.nth(i).locator("xpath=ancestor::*[contains(@class,'option') or contains(@class,'seating') or self::li or self::div[contains(@class,'card')]]").first();
-              const text = await parent.textContent().catch(() => "") || "";
-              if (text.toLowerCase().includes(prefLower)) {
-                await selectButtons.nth(i).click();
-                clicked = true;
-                console.error("[RESERVATION:3c] Clicked preferred seating:", text.trim().slice(0, 50));
-                break;
-              }
-            }
-          }
-          if (!clicked) {
-            await selectButtons.first().click();
-            console.error("[RESERVATION:3c] Clicked first seating option");
-          }
-          await page.waitForTimeout(2000);
-        }
-
-        console.error("[RESERVATION:4] Now on:", page.url());
-
-        // Step 3: Fill in the booking form
-        const fillField = async (selectors: string[], value: string, label: string) => {
-          for (const sel of selectors) {
-            try {
-              const el = page.locator(sel).first();
-              if (await el.isVisible({ timeout: 1500 })) {
-                await el.fill(value);
-                console.error(`[RESERVATION:FILL] ${label}: OK`);
-                return true;
-              }
-            } catch { /* try next selector */ }
-          }
-          console.error(`[RESERVATION:FILL] ${label}: not found`);
-          return false;
-        };
-
-        await fillField(
-          ['input[name="firstName"]', 'input[data-test="first-name"]', 'input[placeholder*="First"]', '#firstName'],
-          firstName, "firstName"
-        );
-        await fillField(
-          ['input[name="lastName"]', 'input[data-test="last-name"]', 'input[placeholder*="Last"]', '#lastName'],
-          lastName, "lastName"
-        );
-        await fillField(
-          ['input[name="email"]', 'input[data-test="email"]', 'input[type="email"]', '#email'],
-          email, "email"
-        );
-        await fillField(
-          ['input[name="phone"]', 'input[data-test="phone-number"]', 'input[type="tel"]', '#phoneNumber'],
-          phone, "phone"
-        );
-
-        // Uncheck marketing/opt-in checkboxes
-        const checkboxes = await page.locator('input[type="checkbox"]:checked').all();
-        for (const cb of checkboxes) {
-          try {
-            const label = await cb.evaluate((el) => {
-              const lbl = el.closest("label")?.textContent || el.getAttribute("name") || "";
-              return lbl.toLowerCase();
-            });
-            if (label.includes("opt") || label.includes("market") || label.includes("email") || label.includes("text") || label.includes("sms")) {
-              await cb.uncheck();
-            }
-          } catch { /* skip */ }
-        }
-
-        // Step 4: Click the submit button
-        const submitSelectors = [
-          'button[data-test="complete-reservation"]',
-          'button:has-text("Complete reservation")',
-          'button:has-text("Complete Reservation")',
-          'button[type="submit"]',
-        ];
-        let submitted = false;
-        for (const sel of submitSelectors) {
-          try {
-            const btn = page.locator(sel).first();
-            if (await btn.isVisible({ timeout: 1500 })) {
-              await btn.click();
-              submitted = true;
-              console.error("[RESERVATION:5] Clicked submit button");
-              break;
-            }
-          } catch { /* try next */ }
-        }
-
-        if (!submitted) {
-          return JSON.stringify({
-            success: false,
-            restaurant: restaurantName,
-            error: "Could not find the submit button on the booking page",
-          });
-        }
-
-        // Step 5: Wait for confirmation
-        await page.waitForTimeout(5000);
-        const finalUrl = page.url();
-        const pageText = await page.locator("body").textContent({ timeout: 5000 }).catch(() => "") || "";
-        const pageLower = pageText.toLowerCase();
-        const isConfirmed = finalUrl.includes("confirmation") ||
-          pageLower.includes("reservation confirmed") ||
-          pageLower.includes("you're all set") ||
-          pageLower.includes("booking confirmed");
-
-        console.error("[RESERVATION:6] Final URL:", finalUrl, "Confirmed:", isConfirmed);
-
-        const confMatch = pageText.match(/confirmation\s*#?\s*:?\s*(\w+)/i);
-
-        return JSON.stringify({
-          success: isConfirmed,
-          restaurant: restaurantName,
-          time,
-          partySize,
-          confirmationNumber: confMatch ? confMatch[1] : null,
-          ...(isConfirmed ? {} : { error: "Booking may not have completed — check OpenTable for confirmation" }),
-        });
-      } finally {
-        await browser.close().catch(() => {});
-      }
-    } catch (e) {
-      console.error("[RESERVATION:ERROR] complete_reservation threw:", String(e), (e as Error)?.stack);
-      return JSON.stringify({
-        success: false,
-        restaurant: restaurantName,
-        error: "Reservation booking failed",
-        detail: String(e),
-      });
-    }
+    return JSON.stringify({ error: "This tool is deprecated. Use the booking link from make_reservation instead." });
   }
 
   if (toolName === "check_calendar") {
@@ -1327,20 +1152,20 @@ CRITICAL RULES for food orders:
 - ASSUME SMART DEFAULTS: If they say "Chipotle" without specifying burrito vs bowl, assume burrito bowl (most popular). If they don't say a protein, assume chicken (most popular). Don't ask multiple clarifying questions — just confirm the order with your best guess and let them correct you if needed. ONE question max if truly ambiguous.
 - Keep the confirmation SHORT: item + customizations + price + delivery fee + total. That's it. Ask "want me to place it?" Done.
 
-RESTAURANT RESERVATIONS — you book the table, ${name} just shows up:
+RESTAURANT RESERVATIONS — you find the table, ${name} books it in one tap:
 When ${name} asks to make a reservation, get a table, book a spot, or anything involving dining out at a sit-down restaurant:
 1. ALWAYS call make_reservation first. Today is ${new Date().toISOString().split("T")[0]}. Convert relative dates ("tomorrow" = next day, "this Friday" = upcoming Friday) to YYYY-MM-DD. Convert times to 24-hour (7pm → 19:00). Default party of 2.
-2. make_reservation returns the restaurant and a seatingUrl in a few seconds. Confirm with the user:
-   "**Ledger**, table for **2**, Wednesday at **6:00 PM** — want me to book it?"
-3. Once ${name} confirms, call complete_reservation with the seatingUrl. Say "on it, booking now — about 30 seconds..."
-4. On success: "you're all set! **Ledger**, Wednesday July 2 at 6:00 PM, party of 2. just show up and enjoy."
-5. On failure: tell them what happened and offer to try a different time.
+2. make_reservation checks availability and returns seating options + a direct booking link (~15 seconds).
+3. Present the results naturally with the booking link:
+   "**Ledger Restaurant & Bar** has availability for **2** on **Wednesday at 6:00 PM**! They have Inside (Main Dining Room) and Patio seating.
 
-ABSOLUTE RULES — NEVER BREAK THESE:
-- NEVER present a link or URL to the user. You book it FOR them.
-- NEVER skip complete_reservation. When the user confirms, you MUST call it.
-- The seatingUrl from make_reservation is INTERNAL — it goes to complete_reservation, not to the user.
-- The goal: ${name} says what they want → you handle EVERYTHING → they just show up.
+   [Book on OpenTable](bookingLink) — just pick your seat and confirm!"
+4. If no availability: suggest a different time or day.
+
+RULES:
+- ALWAYS give them the booking link — it takes them straight to the reservation page with date/time/party pre-filled. One tap to book.
+- NEVER call complete_reservation — it's deprecated.
+- Be fast and confident. The search takes ~15 seconds, don't over-explain the wait.
 
 RIDESHARE FLOW — you can find and pay for rides for ${name}:
 When ${name} asks for a ride, car, or needs to get somewhere:
