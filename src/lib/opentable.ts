@@ -1,28 +1,23 @@
 const AUTOCOMPLETE_HASH = "fe1d118abd4c227750693027c2414d43014c2493f64f49bcef5a65274ce9c3c3";
-const AVAILABILITY_HASH = "436770d3236803f6bb7e8bdfc7b617a582026235c1a6af52297ab63fed08aa0c";
 const GQL_URL = "https://www.opentable.com/dapi/fe/gql";
 
 const DEFAULT_LAT = 42.5195;
 const DEFAULT_LNG = -70.8967;
-
-export interface OTSlot {
-  time: string;
-  slotHash: string;
-  availabilityToken: string;
-  type: string;
-  offsetMinutes: number;
-}
 
 interface OTRestaurant {
   id: number;
   name: string;
 }
 
-export interface OTAvailability {
-  restaurant: OTRestaurant;
-  slots: OTSlot[];
-  date: string;
-  partySize: number;
+export interface ReservationResult {
+  success: boolean;
+  restaurant?: string;
+  time?: string;
+  date?: string;
+  partySize?: number;
+  seatingOptions?: string[];
+  confirmationText?: string;
+  error?: string;
 }
 
 async function getCSRFAndCookies(): Promise<{ csrf: string; cookies: string }> {
@@ -41,7 +36,6 @@ async function getCSRFAndCookies(): Promise<{ csrf: string; cookies: string }> {
     html.match(/__CSRF_TOKEN__\s*=\s*["']([^"']+)["']/);
   const csrf = csrfMatch?.[1] || "";
 
-  console.error("[OT] CSRF:", csrf ? csrf.slice(0, 10) + "..." : "MISSING");
   return { csrf, cookies };
 }
 
@@ -67,18 +61,13 @@ export async function searchRestaurant(query: string): Promise<OTRestaurant | nu
     }),
   });
 
-  if (!res.ok) {
-    console.error("[OT] Autocomplete failed:", res.status);
-    return null;
-  }
+  if (!res.ok) return null;
 
   const data = await res.json();
   const allResults = data?.data?.autocomplete?.autocompleteResults || [];
   const restaurants = allResults.filter((r: Record<string, string>) => r.type === "Restaurant");
-
   if (restaurants.length === 0) return null;
 
-  // Fuzzy name matching
   const queryLower = query.toLowerCase().replace(/['']/g, "");
   let best = restaurants[0];
   let bestScore = 0;
@@ -97,31 +86,10 @@ export async function searchRestaurant(query: string): Promise<OTRestaurant | nu
   return { id: parseInt(best.id as string, 10), name: best.name as string };
 }
 
-// Availability needs a real browser (Akamai blocks server-side calls)
-// This function runs inside Browserbase's page.evaluate()
-export function getAvailabilityScript(rid: number, date: string, time: string, partySize: number) {
-  return {
-    rid,
-    date,
-    time,
-    partySize,
-    hash: AVAILABILITY_HASH,
-  };
-}
-
-export function buildBookingUrl(
-  restaurantId: number,
-  slot: OTSlot,
-  date: string,
-  partySize: number,
-): string {
-  return `https://www.opentable.com/booking/details?` +
-    `availabilityToken=${encodeURIComponent(slot.availabilityToken)}` +
-    `&dateTime=${date}T${slot.time}:00` +
+export function buildSeatingUrl(restaurantId: number, date: string, time: string, partySize: number): string {
+  return `https://www.opentable.com/booking/seating-options?` +
+    `rid=${restaurantId}` +
+    `&dateTime=${date}T${time}:00` +
     `&partySize=${partySize}` +
-    `&rid=${restaurantId}` +
-    `&slotHash=${slot.slotHash}` +
-    `&st=${slot.type}` +
-    `&points=100&pointsType=Standard&resoAttribute=unselected` +
     `&creditCardRequired=false&isModify=false&isMandatory=false&cfe=true`;
 }

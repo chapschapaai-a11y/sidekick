@@ -278,7 +278,7 @@ const SIDEKICK_TOOLS: Anthropic.Tool[] = [
   {
     name: "make_reservation",
     description:
-      "Look up a restaurant on OpenTable and check availability. Returns available time slots. This is FAST (a few seconds). After getting results, confirm the time with the user, then call complete_reservation to book it.",
+      "Search for a restaurant on OpenTable and get its ID. This is FAST (a few seconds). Returns the restaurant name and a seatingUrl. Confirm details with the user, then call complete_reservation with the seatingUrl to book.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -305,13 +305,13 @@ const SIDEKICK_TOOLS: Anthropic.Tool[] = [
   {
     name: "complete_reservation",
     description:
-      "Complete an OpenTable reservation. Uses the bookingUrl from make_reservation to open the booking form, fill in the user's details, and confirm. Takes about 20 seconds. Call AFTER the user confirms the time slot.",
+      "Complete an OpenTable reservation. Opens the seating page, selects a seating option, fills in diner details, and confirms. Takes about 30 seconds. Call AFTER the user confirms.",
     input_schema: {
       type: "object" as const,
       properties: {
-        bookingUrl: {
+        seatingUrl: {
           type: "string",
-          description: "The bookingUrl from make_reservation results",
+          description: "The seatingUrl from make_reservation results",
         },
         restaurantName: {
           type: "string",
@@ -319,18 +319,22 @@ const SIDEKICK_TOOLS: Anthropic.Tool[] = [
         },
         date: {
           type: "string",
-          description: "Reservation date in YYYY-MM-DD format",
+          description: "Reservation date",
         },
         time: {
           type: "string",
-          description: "Selected time slot (e.g. '19:00')",
+          description: "Desired time",
         },
         partySize: {
           type: "number",
           description: "Number of guests",
         },
+        seatingPreference: {
+          type: "string",
+          description: "Seating preference (e.g. 'inside', 'outdoor', 'patio', 'bar'). Leave empty for first available.",
+        },
       },
-      required: ["bookingUrl", "restaurantName", "time", "partySize"],
+      required: ["seatingUrl", "restaurantName", "time", "partySize"],
     },
   },
 ];
@@ -698,106 +702,31 @@ async function handleToolCall(
     };
 
     try {
-      const { searchRestaurant, getAvailabilityScript, buildBookingUrl } = await import("@/lib/opentable");
+      const { searchRestaurant, buildSeatingUrl } = await import("@/lib/opentable");
 
-      // Step 1: Direct API search (~1s, no browser needed)
       console.error("[RESERVATION] Searching for:", restaurant);
       const found = await searchRestaurant(restaurant);
       if (!found) {
         return JSON.stringify({ found: false, error: `Could not find "${restaurant}" on OpenTable` });
       }
+
+      const seatingUrl = buildSeatingUrl(found.id, date, time, partySize);
+      const timeFormatted = new Date(`2000-01-01T${time}`).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+      const dateFormatted = new Date(date + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+
       console.error("[RESERVATION] Found:", found.name, "ID:", found.id);
 
-      // Step 2: Get availability via Browserbase (Akamai blocks server-side calls)
-      console.error("[RESERVATION] Starting browser for availability...");
-      const { createBrowserSession } = await getBrowserbase();
-      const { browser, page } = await createBrowserSession();
-      console.error("[RESERVATION] Browser session created");
-
-      try {
-        await page.goto("https://www.opentable.com", { waitUntil: "commit", timeout: 15000 }).catch(() => {
-          console.error("[RESERVATION] Page load timed out, continuing...");
-        });
-        // Wait for JS to set __CSRF_TOKEN__
-        await page.waitForFunction(() => !!(window as unknown as Record<string, string>).__CSRF_TOKEN__, { timeout: 10000 }).catch(() => {
-          console.error("[RESERVATION] CSRF wait timed out, continuing...");
-        });
-
-        const availArgs = getAvailabilityScript(found.id, date, time, partySize);
-        const slotsRaw = await page.evaluate(async (args) => {
-          const csrfToken = (window as unknown as Record<string, string>).__CSRF_TOKEN__ || "";
-          const res = await fetch("/dapi/fe/gql?optype=query&opname=RestaurantsAvailability", {
-            method: "POST",
-            headers: { "accept": "*/*", "content-type": "application/json", "x-csrf-token": csrfToken },
-            body: JSON.stringify({
-              operationName: "RestaurantsAvailability",
-              variables: {
-                onlyPop: false, forwardDays: 0, requireTimes: false,
-                requireTypes: ["Standard", "Experience"], privilegedAccess: [],
-                restaurantIds: [args.rid], date: args.date, time: args.time,
-                partySize: args.partySize, databaseRegion: "NA",
-                forwardMinutes: 210, backwardMinutes: 210, loyaltyRedemptionTiers: [],
-              },
-              extensions: { persistedQuery: { version: 1, sha256Hash: args.hash } },
-            }),
-          });
-          if (!res.ok) return { error: `HTTP ${res.status}` };
-          const data = await res.json();
-          const rest = data?.data?.availability?.[0];
-          if (!rest) return { error: "No availability data" };
-          const slots = rest.availabilityDays?.[0]?.slots?.filter((s: { isAvailable: boolean }) => s.isAvailable) || [];
-          return {
-            slots: slots.map((s: { timeOffsetMinutes: number; slotHash: string; slotAvailabilityToken: string; type: string }) => ({
-              offsetMinutes: s.timeOffsetMinutes,
-              slotHash: s.slotHash,
-              token: s.slotAvailabilityToken,
-              type: s.type,
-            })),
-          };
-        }, availArgs);
-
-        if ("error" in slotsRaw) {
-          return JSON.stringify({ found: true, restaurant: found.name, error: slotsRaw.error });
-        }
-
-        if (!slotsRaw.slots || slotsRaw.slots.length === 0) {
-          return JSON.stringify({ found: true, restaurant: found.name, error: `No available times at ${found.name} for ${partySize} on ${date} near ${time}` });
-        }
-
-        // Sort by closest to requested time
-        const sorted = [...slotsRaw.slots].sort((a: { offsetMinutes: number }, b: { offsetMinutes: number }) => Math.abs(a.offsetMinutes) - Math.abs(b.offsetMinutes));
-
-        const timeFormatted = new Date(`2000-01-01T${time}`).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-        const dateFormatted = new Date(date + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
-
-        const topSlots = sorted.slice(0, 5).map((s: { offsetMinutes: number; slotHash: string; token: string; type: string }) => {
-          const [reqH, reqM] = time.split(":").map(Number);
-          const totalMinutes = reqH * 60 + reqM + s.offsetMinutes;
-          const slotH = Math.floor(totalMinutes / 60);
-          const slotM = totalMinutes % 60;
-          const slotTime = `${String(slotH).padStart(2, "0")}:${String(slotM).padStart(2, "0")}`;
-          const slot = { time: slotTime, slotHash: s.slotHash, availabilityToken: s.token, type: s.type, offsetMinutes: s.offsetMinutes };
-          const url = buildBookingUrl(found.id, slot, date, partySize);
-          const fmt = new Date(`2000-01-01T${slotTime}`).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-          return { time: fmt, time24: slotTime, bookingUrl: url };
-        });
-
-        console.error("[RESERVATION] Found", topSlots.length, "slots, closest:", topSlots[0]?.time);
-
-        return JSON.stringify({
-          found: true,
-          restaurant: found.name,
-          restaurantId: found.id,
-          platform: "opentable",
-          date: dateFormatted,
-          requestedTime: timeFormatted,
-          partySize,
-          availableSlots: topSlots,
-          _nextStep: "Show the user the available times. Once they pick one (or confirm the closest), call complete_reservation with that slot's bookingUrl. Do NOT show the bookingUrl to the user.",
-        });
-      } finally {
-        await browser.close().catch(() => {});
-      }
+      return JSON.stringify({
+        found: true,
+        restaurant: found.name,
+        restaurantId: found.id,
+        platform: "opentable",
+        date: dateFormatted,
+        time: timeFormatted,
+        partySize,
+        seatingUrl,
+        _nextStep: "Confirm with the user: restaurant, date, time, party size. Once they confirm, call complete_reservation with the seatingUrl. Do NOT show the URL to the user.",
+      });
     } catch (e) {
       console.error("[RESERVATION] make_reservation error:", e);
       return JSON.stringify({ found: false, error: `Reservation search failed: ${String(e)}` });
@@ -805,15 +734,16 @@ async function handleToolCall(
   }
 
   if (toolName === "complete_reservation") {
-    const { bookingUrl, restaurantName, time, partySize } = toolInput as {
-      bookingUrl: string;
+    const { seatingUrl, restaurantName, time, partySize, seatingPreference } = toolInput as {
+      seatingUrl: string;
       restaurantName: string;
       date?: string;
       time: string;
       partySize: number;
+      seatingPreference?: string;
     };
     try {
-      console.error("[RESERVATION:1] complete_reservation called", JSON.stringify({ restaurantName, bookingUrl: bookingUrl?.slice(0, 80), time, partySize }));
+      console.error("[RESERVATION:1] complete_reservation called", JSON.stringify({ restaurantName, seatingUrl: seatingUrl?.slice(0, 80), time, partySize }));
 
       const user = await prisma.user.findUnique({ where: { id: userId } });
       const firstName = user?.name?.split(" ")[0] || "Guest";
@@ -830,17 +760,60 @@ async function handleToolCall(
       console.error("[RESERVATION:2] Browser session created");
 
       try {
-        // Navigate directly to the booking details page (skips seating options)
-        await page.goto(bookingUrl, { waitUntil: "domcontentloaded", timeout: 25000 });
-        await page.waitForTimeout(3000);
-        console.error("[RESERVATION:3] Booking page loaded:", page.url());
+        // Step 1: Go to the seating-options page
+        await page.goto(seatingUrl, { waitUntil: "domcontentloaded", timeout: 25000 });
+        await page.waitForTimeout(2000);
+        console.error("[RESERVATION:3] Seating page loaded:", page.url());
 
-        // Fill in the form fields using common OpenTable selectors
+        // Check for "Access Denied"
+        const bodyText = await page.locator("body").textContent({ timeout: 3000 }).catch(() => "") || "";
+        if (bodyText.includes("Access Denied")) {
+          return JSON.stringify({ success: false, restaurant: restaurantName, error: "OpenTable blocked the request. Try again in a moment." });
+        }
+
+        // Step 2: Select a seating option
+        // Look for "Select" buttons next to seating descriptions
+        const selectButtons = page.locator('button:has-text("Select"), a:has-text("Select")');
+        const buttonCount = await selectButtons.count();
+        console.error("[RESERVATION:3b] Found", buttonCount, "Select buttons");
+
+        if (buttonCount === 0) {
+          // Maybe it went straight to the details form (no seating choices)
+          const hasForm = await page.locator('input[name="firstName"], input[data-test="first-name"]').count();
+          if (hasForm === 0) {
+            return JSON.stringify({ success: false, restaurant: restaurantName, error: `No availability at ${restaurantName} for ${partySize} at ${time}` });
+          }
+        } else {
+          // Try to match seating preference if given
+          let clicked = false;
+          if (seatingPreference) {
+            const prefLower = seatingPreference.toLowerCase();
+            for (let i = 0; i < buttonCount; i++) {
+              const parent = selectButtons.nth(i).locator("xpath=ancestor::*[contains(@class,'option') or contains(@class,'seating') or self::li or self::div[contains(@class,'card')]]").first();
+              const text = await parent.textContent().catch(() => "") || "";
+              if (text.toLowerCase().includes(prefLower)) {
+                await selectButtons.nth(i).click();
+                clicked = true;
+                console.error("[RESERVATION:3c] Clicked preferred seating:", text.trim().slice(0, 50));
+                break;
+              }
+            }
+          }
+          if (!clicked) {
+            await selectButtons.first().click();
+            console.error("[RESERVATION:3c] Clicked first seating option");
+          }
+          await page.waitForTimeout(2000);
+        }
+
+        console.error("[RESERVATION:4] Now on:", page.url());
+
+        // Step 3: Fill in the booking form
         const fillField = async (selectors: string[], value: string, label: string) => {
           for (const sel of selectors) {
             try {
               const el = page.locator(sel).first();
-              if (await el.isVisible({ timeout: 1000 })) {
+              if (await el.isVisible({ timeout: 1500 })) {
                 await el.fill(value);
                 console.error(`[RESERVATION:FILL] ${label}: OK`);
                 return true;
@@ -878,12 +851,11 @@ async function handleToolCall(
             });
             if (label.includes("opt") || label.includes("market") || label.includes("email") || label.includes("text") || label.includes("sms")) {
               await cb.uncheck();
-              console.error("[RESERVATION:UNCHECK] Unchecked marketing checkbox");
             }
           } catch { /* skip */ }
         }
 
-        // Click the submit button
+        // Step 4: Click the submit button
         const submitSelectors = [
           'button[data-test="complete-reservation"]',
           'button:has-text("Complete reservation")',
@@ -894,17 +866,16 @@ async function handleToolCall(
         for (const sel of submitSelectors) {
           try {
             const btn = page.locator(sel).first();
-            if (await btn.isVisible({ timeout: 1000 })) {
+            if (await btn.isVisible({ timeout: 1500 })) {
               await btn.click();
               submitted = true;
-              console.error("[RESERVATION:4] Clicked submit button");
+              console.error("[RESERVATION:5] Clicked submit button");
               break;
             }
           } catch { /* try next */ }
         }
 
         if (!submitted) {
-          console.error("[RESERVATION:4] Could not find submit button");
           return JSON.stringify({
             success: false,
             restaurant: restaurantName,
@@ -912,16 +883,17 @@ async function handleToolCall(
           });
         }
 
-        // Wait for confirmation page
+        // Step 5: Wait for confirmation
         await page.waitForTimeout(5000);
         const finalUrl = page.url();
         const pageText = await page.locator("body").textContent({ timeout: 5000 }).catch(() => "") || "";
+        const pageLower = pageText.toLowerCase();
         const isConfirmed = finalUrl.includes("confirmation") ||
-          pageText.toLowerCase().includes("reservation confirmed") ||
-          pageText.toLowerCase().includes("you're all set") ||
-          pageText.toLowerCase().includes("booking confirmed");
+          pageLower.includes("reservation confirmed") ||
+          pageLower.includes("you're all set") ||
+          pageLower.includes("booking confirmed");
 
-        console.error("[RESERVATION:5] Final URL:", finalUrl, "Confirmed:", isConfirmed);
+        console.error("[RESERVATION:6] Final URL:", finalUrl, "Confirmed:", isConfirmed);
 
         const confMatch = pageText.match(/confirmation\s*#?\s*:?\s*(\w+)/i);
 
@@ -1358,16 +1330,16 @@ CRITICAL RULES for food orders:
 RESTAURANT RESERVATIONS — you book the table, ${name} just shows up:
 When ${name} asks to make a reservation, get a table, book a spot, or anything involving dining out at a sit-down restaurant:
 1. ALWAYS call make_reservation first. Today is ${new Date().toISOString().split("T")[0]}. Convert relative dates ("tomorrow" = next day, "this Friday" = upcoming Friday) to YYYY-MM-DD. Convert times to 24-hour (7pm → 19:00). Default party of 2.
-2. make_reservation returns available time slots in a few seconds. Confirm the best slot with the user:
-   "**Ledger** has a table for **2** tomorrow at **6:00 PM** — want me to book it?"
-3. Once ${name} confirms, call complete_reservation with the bookingUrl from the slot they picked. Say "on it, booking now..."
-4. On success: "you're all set! **Ledger**, Thursday June 25 at 6:00 PM, party of 2. just show up and enjoy."
+2. make_reservation returns the restaurant and a seatingUrl in a few seconds. Confirm with the user:
+   "**Ledger**, table for **2**, Wednesday at **6:00 PM** — want me to book it?"
+3. Once ${name} confirms, call complete_reservation with the seatingUrl. Say "on it, booking now — about 30 seconds..."
+4. On success: "you're all set! **Ledger**, Wednesday July 2 at 6:00 PM, party of 2. just show up and enjoy."
 5. On failure: tell them what happened and offer to try a different time.
 
 ABSOLUTE RULES — NEVER BREAK THESE:
 - NEVER present a link or URL to the user. You book it FOR them.
 - NEVER skip complete_reservation. When the user confirms, you MUST call it.
-- The bookingUrl from make_reservation is INTERNAL — it goes to complete_reservation, not to the user.
+- The seatingUrl from make_reservation is INTERNAL — it goes to complete_reservation, not to the user.
 - The goal: ${name} says what they want → you handle EVERYTHING → they just show up.
 
 RIDESHARE FLOW — you can find and pay for rides for ${name}:
