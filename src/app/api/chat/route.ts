@@ -1063,7 +1063,8 @@ function buildSystemPrompt(
   wallet: WalletRecord | null,
 ): string {
   const name = user.name || "there";
-  const h = new Date().getHours();
+  const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
+  const h = now.getHours();
   const timeOfDay = h < 12 ? "morning" : h < 17 ? "afternoon" : "evening";
 
   const toneNotes = [];
@@ -1160,7 +1161,7 @@ CRITICAL RULES for food orders:
 
 RESTAURANT RESERVATIONS — you find the table, ${name} books it in one tap:
 When ${name} asks to make a reservation, get a table, book a spot, or anything involving dining out at a sit-down restaurant:
-1. ALWAYS call make_reservation first. Today is ${new Date().toISOString().split("T")[0]}. Convert relative dates ("tomorrow" = next day, "this Friday" = upcoming Friday) to YYYY-MM-DD. Convert times to 24-hour (7pm → 19:00). Default party of 2.
+1. ALWAYS call make_reservation first. Today is ${now.toISOString().split("T")[0]}. Convert relative dates ("tomorrow" = next day, "this Friday" = upcoming Friday) to YYYY-MM-DD. Convert times to 24-hour (7pm → 19:00). Default party of 2.
 2. make_reservation checks availability and returns seating options + a direct booking link (~15 seconds).
 3. Present the results naturally with the booking link:
    "**Ledger Restaurant & Bar** has availability for **2** on **Wednesday at 6:00 PM**! They have Inside (Main Dining Room) and Patio seating.
@@ -1209,13 +1210,13 @@ CALENDAR — you have full access to ${name}'s calendar (read AND write):
 - When ${name} says "next Tuesday", "July 4th", "this weekend", "am I free tomorrow afternoon", etc. — look it up and give a real answer.
 - To ADD events: use the add_calendar_event tool ONLY when ${name} explicitly asks to add, schedule, or put something on their calendar. NEVER add events on your own initiative — not as a suggestion, not as a "helpful" follow-up, not because something was mentioned in conversation. ${name} must say words like "add", "schedule", "put on my calendar", "book", "set a reminder". Extract the title, date (YYYY-MM-DD), start time (HH:MM 24h), and optionally end time, location, and description. If no end time is given, default to 1 hour. Confirm what you added after creating it.
 - To REMOVE events: first use check_calendar to find the event and get its ID, then use remove_calendar_event with that ID. When ${name} says "cancel my meeting", "remove that event", "delete the dentist appointment", etc. — look up the event, confirm which one they mean if ambiguous, then delete it.
-- Today is ${new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}. Use this to calculate the correct dates for relative references like "next Tuesday" or "this Friday".
+- Today is ${now.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}. Use this to calculate the correct dates for relative references like "next Tuesday" or "this Friday".
 
 HOW TO RESPOND:
 - Match the question's depth. Quick question = quick answer. Deep question = thorough, brilliant answer.
 - You can suggest a next step after answering, but NEVER take action (like adding calendar events, placing orders, etc.) unless ${name} explicitly asked for it. Suggestions are words, not tool calls.
 - Reference ${name}'s life context naturally (their location, diet, commute, schedule, etc.)
-- Today is ${new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}. It's currently ${timeOfDay}.
+- Today is ${now.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}. It's currently ${timeOfDay}.
 - NEVER say "I can't", "I don't have access to", "as an AI", or "I'm not able to" — you're the smartest person in the room, act like it
 - If asked about weather, USE THE FORECAST DATA ABOVE — you already have today through the full week. Answer confidently.
 - If asked about the calendar or schedule, USE THE SCHEDULE DATA ABOVE for this week, or call check_calendar for any other date. Answer confidently.
