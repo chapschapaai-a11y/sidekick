@@ -703,12 +703,18 @@ async function handleToolCall(
           if (bodyText.includes("Access Denied")) {
             console.error("[RESERVATION] Seating page blocked by Akamai");
           } else {
-            const options = await page.locator('button:has-text("Select"), a:has-text("Select")').evaluateAll((btns: Element[]) =>
-              btns.map(btn => {
-                const container = btn.closest("[class]")?.parentElement;
-                return container?.textContent?.replace(/Select$/i, "").replace(/\s+/g, " ").trim() || "";
-              }).filter(Boolean)
-            );
+            const options = await page.evaluate(() => {
+              const buttons = Array.from(document.querySelectorAll("button, a")).filter(b => b.textContent?.trim() === "Select");
+              return buttons.map(btn => {
+                let el: Element | null = btn.parentElement;
+                for (let i = 0; i < 5 && el; i++) {
+                  const text = el.textContent?.replace(/\s+/g, " ").trim() || "";
+                  if (text.length > 5 && text.length < 200) return text.replace(/\s*Select\s*$/, "").trim();
+                  el = el.parentElement;
+                }
+                return "";
+              }).filter(Boolean);
+            });
             seatingOptions = options;
             console.error("[RESERVATION] Seating options:", options);
           }
