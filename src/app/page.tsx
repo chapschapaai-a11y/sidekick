@@ -61,6 +61,36 @@ export default function Home() {
       });
   }, []);
 
+  // Keep the user's live location fresh — on load and whenever the app comes back to the foreground
+  useEffect(() => {
+    if (!authUser || authUser === "loading" || !("geolocation" in navigator)) return;
+
+    const updateLocation = () => {
+      const last = Number(localStorage.getItem("sidekick_loc_ts") || 0);
+      if (Date.now() - last < 10 * 60 * 1000) return; // at most every 10 minutes
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          localStorage.setItem("sidekick_loc_ts", String(Date.now()));
+          fetch("/api/location", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              latitude: pos.coords.latitude,
+              longitude: pos.coords.longitude,
+            }),
+          }).catch(() => {});
+        },
+        () => {}, // user denied or unavailable — keep using last known location
+        { enableHighAccuracy: false, maximumAge: 5 * 60 * 1000, timeout: 10000 }
+      );
+    };
+
+    updateLocation();
+    const onVisible = () => { if (document.visibilityState === "visible") updateLocation(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [authUser]);
+
   const handleUpdate = useCallback((partial: Partial<SidekickState>) => {
     setState((prev) => {
       if (!prev) return prev;

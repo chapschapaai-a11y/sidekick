@@ -203,6 +203,49 @@ const SIDEKICK_TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: "add_task",
+    description:
+      "Add a task/to-do to the user's task list. Use when the user asks to add something to their tasks or to-dos, or says things like 'remind me to X', 'I need to do Y', 'add Z to my list'. Works for spoken commands too ('Hey [assistant name], add ... to my tasks'). Extract a due date and priority when mentioned.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        title: {
+          type: "string",
+          description: "Short, clear task title (e.g. 'Finish investor deck')",
+        },
+        dueDate: {
+          type: "string",
+          description: "Due date in YYYY-MM-DD format, if the user mentioned one (convert 'Friday', 'tomorrow', etc.)",
+        },
+        priority: {
+          type: "string",
+          enum: ["low", "medium", "high"],
+          description: "Priority — infer from urgency words ('ASAP', 'important' = high). Default medium.",
+        },
+      },
+      required: ["title"],
+    },
+  },
+  {
+    name: "complete_task",
+    description:
+      "Mark a task as done. Use when the user says they finished something on their list ('done with X', 'check off Y', 'I finished Z'). Match against the OPEN TASKS list in context.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        taskId: {
+          type: "string",
+          description: "The task ID from the OPEN TASKS context",
+        },
+        title: {
+          type: "string",
+          description: "The task title (for confirmation)",
+        },
+      },
+      required: ["taskId"],
+    },
+  },
+  {
     name: "check_calendar",
     description:
       "Look up calendar events for any date or date range. Use whenever the user asks about their schedule — 'what do I have Tuesday', 'am I free this weekend', 'next Thursday', 'this week', 'July 4th', etc. Returns all events from Google Calendar and any imported calendars (iCloud, Outlook, etc.).",
@@ -754,6 +797,42 @@ async function handleToolCall(
     return JSON.stringify({ error: "This tool is deprecated. Use the booking link from make_reservation instead." });
   }
 
+  if (toolName === "add_task") {
+    const { title, dueDate, priority } = toolInput as { title: string; dueDate?: string; priority?: string };
+    try {
+      const task = await prisma.task.create({
+        data: {
+          userId,
+          title: title.trim(),
+          priority: priority || "medium",
+          dueDate: dueDate ? new Date(dueDate + "T12:00:00") : null,
+        },
+      });
+      return JSON.stringify({
+        success: true,
+        taskId: task.id,
+        title: task.title,
+        priority: task.priority,
+        dueDate: dueDate || null,
+      });
+    } catch (e) {
+      return JSON.stringify({ success: false, error: "Failed to add task", detail: String(e) });
+    }
+  }
+
+  if (toolName === "complete_task") {
+    const { taskId, title } = toolInput as { taskId: string; title?: string };
+    try {
+      await prisma.task.update({
+        where: { id: taskId, userId },
+        data: { completed: true },
+      });
+      return JSON.stringify({ success: true, completed: title || taskId });
+    } catch (e) {
+      return JSON.stringify({ success: false, error: "Could not find that task", detail: String(e) });
+    }
+  }
+
   if (toolName === "check_calendar") {
     const { startDate, endDate } = toolInput as { startDate: string; endDate: string };
     try {
@@ -1049,6 +1128,7 @@ interface UserProfile {
 }
 
 interface TaskRecord {
+  id: string;
   title: string;
   completed: boolean;
   priority: string;
@@ -1091,14 +1171,14 @@ function buildSystemPrompt(
   const openTasks = tasks.filter((t) => !t.completed);
   const doneTasks = tasks.filter((t) => t.completed);
   const taskContext = openTasks.length > 0
-    ? `\nOPEN TASKS:\n${openTasks.map((t) => `- ${t.title} (${t.priority}${t.dueDate ? `, due ${t.dueDate.toLocaleDateString()}` : ""})`).join("\n")}`
+    ? `\nOPEN TASKS:\n${openTasks.map((t) => `- ${t.title} (${t.priority}${t.dueDate ? `, due ${t.dueDate.toLocaleDateString("en-US", { timeZone: "America/New_York" })}` : ""}) [id: ${t.id}]`).join("\n")}`
     : "\nNo open tasks right now.";
   const doneContext = doneTasks.length > 0
     ? `\nRECENTLY COMPLETED:\n${doneTasks.slice(0, 5).map((t) => `- ${t.title} ✓`).join("\n")}`
     : "";
 
   const contextParts = [];
-  if (user.location) contextParts.push(`Location: ${user.location}`);
+  if (user.location) contextParts.push(`Current location (live GPS, updates automatically): ${user.location}`);
   if (user.homeAddress) contextParts.push(`Home address: ${user.homeAddress}`);
   if (user.email) contextParts.push(`Email: ${user.email}`);
   if (user.phone) contextParts.push(`Phone: ${user.phone}`);
@@ -1229,6 +1309,11 @@ CRITICAL CALENDAR RULES — read these carefully:
 - To REMOVE events: first use check_calendar to find events and get their id AND calendarId, then call remove_calendar_event with BOTH for each one. If ${name} says to remove multiple events, remove ALL of them — don't stop after one or two.
 - Events with readOnly: true live on subscribed calendars (holidays, sports schedules, etc.) and cannot be deleted — tell ${name} they'd need to unsubscribe from that calendar in Google Calendar instead.
 - If a removal fails, tell ${name} honestly — don't pretend it worked.
+
+TASKS — you manage ${name}'s to-do list:
+- To ADD: use add_task when ${name} says "add X to my tasks", "remind me to X", "I need to do Y", or addresses you by name with a task ("Hey ${user.sidekickName || "Sidekick"}, add..."). Extract the due date (convert relative dates using today's date) and infer priority from urgency. Confirm briefly: "added — **X**, due Friday, high priority."
+- To COMPLETE: use complete_task with the [id: ...] from OPEN TASKS when ${name} says something is done.
+- Never invent tasks. Only add what ${name} explicitly asked for.
 
 HOW TO RESPOND:
 - Match the question's depth. Quick question = quick answer. Deep question = thorough, brilliant answer.

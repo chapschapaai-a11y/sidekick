@@ -4,8 +4,22 @@
     {
       "name": "sidekick-dev",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
       "port": 3000
+    },
+    {
+      "name": "sidekick-dev-alt",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "next",
+        "dev",
+        "-p",
+        "3457"
+      ],
+      "port": 3457
     }
   ]
 }

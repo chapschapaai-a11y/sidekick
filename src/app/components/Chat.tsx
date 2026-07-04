@@ -41,7 +41,48 @@ export default function Chat({ state }: Props) {
   const [loaded, setLoaded] = useState(false);
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [voiceEnabled, setVoiceEnabled] = useState(true);
+  const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+
+  async function toggleRecording() {
+    if (isRecording) {
+      recorderRef.current?.stop();
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      recorderRef.current = recorder;
+      chunksRef.current = [];
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        setIsRecording(false);
+        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
+        if (blob.size < 1000) return; // too short — ignore accidental taps
+        setIsTranscribing(true);
+        try {
+          const form = new FormData();
+          form.append("audio", blob, "recording");
+          const res = await fetch("/api/stt", { method: "POST", body: form });
+          const data = await res.json();
+          if (data.text) {
+            sendMessage(data.text);
+          }
+        } catch {
+          // transcription failed — stay quiet, user can retry
+        }
+        setIsTranscribing(false);
+      };
+      recorder.start();
+      setIsRecording(true);
+    } catch {
+      // mic permission denied — nothing to do
+    }
+  }
   const chatBodyRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -137,14 +178,27 @@ export default function Chat({ state }: Props) {
       .catch(() => {});
   }
 
-  const scrollToBottom = useCallback(() => {
-    if (chatBodyRef.current) {
-      chatBodyRef.current.scrollTop = chatBodyRef.current.scrollHeight;
+  const nearBottomRef = useRef(true);
+
+  const handleChatScroll = useCallback(() => {
+    const el = chatBodyRef.current;
+    if (!el) return;
+    // "Near bottom" = within 120px of the end; only then do we auto-follow new messages
+    nearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+  }, []);
+
+  const scrollToBottom = useCallback((force = false) => {
+    const el = chatBodyRef.current;
+    if (!el) return;
+    if (force || nearBottomRef.current) {
+      el.scrollTop = el.scrollHeight;
     }
   }, []);
 
   useEffect(() => {
-    scrollToBottom();
+    // Always follow your own new message; only follow replies if you're already at the bottom
+    const last = messages[messages.length - 1];
+    scrollToBottom(last?.role === "user");
   }, [messages, isTyping, scrollToBottom]);
 
   async function sendMessage(text: string) {
@@ -327,7 +381,12 @@ export default function Chat({ state }: Props) {
       ) : (
         <>
           {/* Messages */}
-          <div ref={chatBodyRef} className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-3">
+          <div
+            ref={chatBodyRef}
+            onScroll={handleChatScroll}
+            className="flex-1 overflow-y-auto overscroll-contain px-5 py-4 flex flex-col gap-3"
+            style={{ WebkitOverflowScrolling: "touch", touchAction: "pan-y" }}
+          >
             {messages.map((msg) => (
               <div
                 key={msg.id}
@@ -420,13 +479,29 @@ export default function Chat({ state }: Props) {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleSend()}
-                placeholder="Message..."
+                placeholder={isRecording ? "Listening..." : isTranscribing ? "Transcribing..." : "Message..."}
                 className="flex-1 bg-transparent text-text-primary placeholder:text-text-muted text-base pl-3 focus:outline-none"
               />
               <button
+                onClick={toggleRecording}
+                disabled={isTranscribing}
+                className={`w-9 h-9 rounded-full flex items-center justify-center transition-all shrink-0 ${
+                  isRecording
+                    ? "bg-red-500 text-white animate-pulse"
+                    : isTranscribing
+                      ? "bg-bg-secondary text-text-muted"
+                      : "bg-transparent text-text-muted hover:text-text-primary"
+                }`}
+                title={isRecording ? "Tap to stop and send" : "Tap to speak"}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/>
+                </svg>
+              </button>
+              <button
                 onClick={handleSend}
                 disabled={!input.trim()}
-                className="w-9 h-9 rounded-full bg-accent text-white flex items-center justify-center font-bold text-sm disabled:opacity-30 transition-opacity"
+                className="w-9 h-9 rounded-full bg-accent text-white flex items-center justify-center font-bold text-sm disabled:opacity-30 transition-opacity shrink-0"
               >
                 ↑
               </button>
