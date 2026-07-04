@@ -50,11 +50,82 @@ export default function SMSConsentPage() {
           How You Opt In
         </h2>
         <p>
-          By creating a Sidekick account and providing your phone number during onboarding, you
-          consent to receive SMS messages from Sidekick at the phone number you provided. You may
-          also opt in by texting START or HELLO to our phone number. Your consent is not a
-          condition of any purchase.
+          SMS consent is collected during account onboarding through an explicit, unchecked-by-default
+          checkbox. When you enter your phone number, you must actively check the consent box below
+          before SMS messaging is enabled. No messages are sent unless this box is checked. You may
+          also opt in by texting START to our phone number. Consent is not a condition of any purchase.
         </p>
+        <p style={{ marginTop: 16, marginBottom: 8, fontSize: 14, color: "#a09888" }}>
+          This is the exact opt-in screen shown in the Sidekick app:
+        </p>
+        <div
+          style={{
+            border: "1px solid #2a2a2e",
+            borderRadius: 16,
+            padding: "28px 24px",
+            backgroundColor: "#ffffff",
+            color: "#1a1a1e",
+            maxWidth: 420,
+            margin: "0 auto",
+            fontFamily: "system-ui, -apple-system, sans-serif",
+            lineHeight: 1.5,
+          }}
+        >
+          <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 4 }}>
+            What&apos;s your phone number?
+          </div>
+          <div style={{ fontSize: 12, color: "#8e8e93", marginBottom: 20 }}>
+            Your Sidekick uses this to text you briefings, reminders, and updates.
+          </div>
+          <div style={{ fontSize: 11, fontWeight: 600, color: "#b8860b", marginBottom: 4 }}>
+            Phone number
+          </div>
+          <div
+            style={{
+              borderBottom: "2px solid #e5e5e5",
+              padding: "8px 0",
+              fontSize: 16,
+              color: "#c7c7cc",
+              marginBottom: 20,
+            }}
+          >
+            (512) 555-1234
+          </div>
+          <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+            <div
+              style={{
+                width: 16,
+                height: 16,
+                border: "2px solid #b8860b",
+                borderRadius: 3,
+                flexShrink: 0,
+                marginTop: 2,
+              }}
+            />
+            <div style={{ fontSize: 11.5, color: "#6e6e73" }}>
+              I agree to receive recurring automated text messages from Sidekick at the number
+              provided (daily briefings, reminders, confirmations, and account updates). Consent is
+              not a condition of purchase. Message frequency varies. Message &amp; data rates may
+              apply. Reply HELP for help or STOP to cancel anytime.{" "}
+              <span style={{ color: "#b8860b", textDecoration: "underline" }}>SMS Terms</span> &amp;{" "}
+              <span style={{ color: "#b8860b", textDecoration: "underline" }}>Privacy Policy</span>.
+            </div>
+          </div>
+          <div
+            style={{
+              marginTop: 20,
+              backgroundColor: "#e5e5ea",
+              color: "#aeaeb2",
+              textAlign: "center",
+              borderRadius: 24,
+              padding: "12px 0",
+              fontSize: 14,
+              fontWeight: 600,
+            }}
+          >
+            Continue (disabled until box is checked)
+          </div>
+        </div>
       </section>
 
       <section style={{ marginBottom: 32 }}>

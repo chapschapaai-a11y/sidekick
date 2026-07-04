@@ -20,6 +20,7 @@ export interface SidekickState {
   longitude: number | null;
   sidekickName: string;
   morningBriefing: boolean;
+  smsConsent: boolean;
   onboarded: boolean;
 }
 
@@ -43,6 +44,7 @@ const DEFAULT_STATE: SidekickState = {
   longitude: null,
   sidekickName: "",
   morningBriefing: false,
+  smsConsent: false,
   onboarded: false,
 };
 
