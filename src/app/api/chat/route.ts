@@ -28,7 +28,7 @@ const SIDEKICK_TOOLS: Anthropic.Tool[] = [
   {
     name: "place_order",
     description:
-      "Add a product to the Amazon cart using its URL. Call this ONLY after the user confirms the purchase. This navigates to the product page and clicks Add to Cart.",
+      "Build a one-tap Amazon add-to-cart link for a product. Call after the user confirms which product they want. Returns an addToCartUrl that puts the item in the USER'S own Amazon cart when tapped — they check out with their saved payment.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -47,7 +47,7 @@ const SIDEKICK_TOOLS: Anthropic.Tool[] = [
   {
     name: "spend_wallet",
     description:
-      "Spend money from the user's Sidekick wallet to make a purchase. Call this AFTER place_order succeeds to deduct the cost from the wallet. Never call without a confirmed price from a real product search.",
+      "Deduct money from the user's Sidekick wallet. ONLY call this when Sidekick itself completed a real checkout end-to-end (e.g. a browser-automation purchase paid with the Sidekick virtual card). NEVER call it for handoff links — Amazon carts, Uber Eats/DoorDash orders, rides, and reservations are paid by the user in their own account, not from the wallet.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -81,7 +81,7 @@ const SIDEKICK_TOOLS: Anthropic.Tool[] = [
   {
     name: "search_restaurants",
     description:
-      "Search DoorDash for restaurants near the user's location. Returns restaurant names, ratings, delivery times, and URLs. Use ONLY when the user wants to order FOOD for delivery — meals, drinks, groceries from restaurants. Do NOT use for books, electronics, or non-food items (use search_product for those).",
+      "Look up a restaurant for food delivery. Returns typical menu/pricing info for national chains plus one-tap Uber Eats and DoorDash links. Use ONLY when the user wants to order FOOD for delivery — meals, drinks, groceries from restaurants. Do NOT use for books, electronics, or non-food items (use search_product for those).",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -390,14 +390,30 @@ async function handleToolCall(
   }
 
   if (toolName === "place_order") {
-    const { productUrl } = toolInput as { productUrl: string; productTitle: string };
-    try {
-      const { addAmazonToCart } = await getBrowserbase();
-      const result = await addAmazonToCart(productUrl);
-      return JSON.stringify(result);
-    } catch (e) {
-      return JSON.stringify({ success: false, error: "Failed to add to cart", detail: String(e) });
+    const { productUrl, productTitle } = toolInput as { productUrl: string; productTitle: string };
+
+    // Extract the ASIN and build Amazon's official add-to-cart URL — one tap
+    // adds the item to the USER'S real cart (their account, their payment).
+    const asinMatch =
+      productUrl.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})/i) ||
+      productUrl.match(/[?&]ASIN(?:\.1)?=([A-Z0-9]{10})/i);
+
+    if (asinMatch) {
+      const asin = asinMatch[1].toUpperCase();
+      return JSON.stringify({
+        success: true,
+        addToCartUrl: `https://www.amazon.com/gp/aws/cart/add.html?ASIN.1=${asin}&Quantity.1=1`,
+        productTitle,
+        _nextStep: "Give the user this addToCartUrl as a markdown link — one tap adds the item to THEIR Amazon cart, and they check out with their own saved payment in two taps. Do NOT call spend_wallet — they pay Amazon directly.",
+      });
     }
+
+    return JSON.stringify({
+      success: true,
+      addToCartUrl: productUrl,
+      productTitle,
+      _nextStep: "Could not build a direct add-to-cart link — give the user this product link instead and tell them to tap Add to Cart there. Do NOT call spend_wallet.",
+    });
   }
 
   if (toolName === "spend_wallet") {
@@ -492,28 +508,33 @@ async function handleToolCall(
 
     if (chainMatch) {
       const chain = knownChains[chainMatch];
-      const searchUrl = `https://www.doordash.com/search/store/${encodeURIComponent(chain.name)}/`;
+      const doordashUrl = `https://www.doordash.com/search/store/${encodeURIComponent(chain.name)}/`;
+      const uberEatsUrl = `https://www.ubereats.com/search?q=${encodeURIComponent(chain.name)}`;
       return JSON.stringify({
         results: [{
           name: chain.name,
-          url: searchUrl,
-          deliveryFee: chain.deliveryFee,
+          typicalMenu: chain.menu,
+          menuNote: "Typical national pricing — actual delivery-app prices are usually 10-20% higher. Present as estimates ('usually around $X').",
+          typicalDeliveryFee: chain.deliveryFee,
           deliveryTime: "25-40 min",
-          menu: chain.menu,
         }],
-        doordashSearchUrl: searchUrl,
+        uberEatsUrl,
+        doordashUrl,
+        _nextStep: "Help the user decide what to order using the typical menu (present prices as estimates). Once they know what they want, give BOTH links as markdown so they can fire it off in the app they use — their saved address and payment are already there. Do NOT call spend_wallet and do NOT claim the order was placed.",
       });
     }
 
-    const searchUrl = `https://www.doordash.com/search/store/${encodeURIComponent(query)}/`;
+    const doordashUrl = `https://www.doordash.com/search/store/${encodeURIComponent(query)}/`;
+    const uberEatsUrl = `https://www.ubereats.com/search?q=${encodeURIComponent(query)}`;
     return JSON.stringify({
       results: [{
         name: query.charAt(0).toUpperCase() + query.slice(1),
-        url: searchUrl,
-        deliveryFee: "$2.99-4.99",
+        typicalDeliveryFee: "$2.99-4.99",
         deliveryTime: "25-45 min",
       }],
-      doordashSearchUrl: searchUrl,
+      uberEatsUrl,
+      doordashUrl,
+      _nextStep: "Give the user BOTH links as markdown so they can order in the app they use. Do NOT invent menu prices for local restaurants. Do NOT call spend_wallet or claim the order was placed.",
     });
   }
 
@@ -1217,39 +1238,29 @@ ${taskContext}${doneContext}
 WALLET:
 ${wallet ? `Balance: $${wallet.balance.toFixed(2)}${wallet.cardLast4 ? ` | Funding card: ${wallet.cardBrand} •••• ${wallet.cardLast4}` : ""}${wallet.virtualCardReady ? ` | Virtual debit card: •••• ${wallet.virtualCardLast4} (ready for online purchases)` : " | No virtual card yet — tell them to activate it in the wallet tab"}` : "No wallet set up yet."}
 
-PURCHASE FLOW — you can buy things for ${name} using their wallet and real browser automation:
-When ${name} asks you to order/buy/book something:
-1. Figure out what they want — ask clarifying questions if needed (size, edition, restaurant, etc.)
-2. Use search_product to find the REAL product on Amazon with the actual price — don't guess prices
-3. Show them the best match with the real price: "found **Atomic Habits** paperback for **$11.99** on Amazon"
-4. Ask for confirmation: "want me to grab it?"
-5. ONLY after they confirm — call place_order to add it to their Amazon cart, then spend_wallet to deduct from their balance
-6. If their balance is too low, tell them exactly how much to add in the wallet tab
-7. Tell them to say "hold on let me search" or similar if they want to do the shopping themselves — the search takes ~15 seconds since it's opening a real browser
+THE ONE-TAP PATTERN — how all commerce works:
+You do the finding, deciding, and staging. ${name} does ONE tap to pay in their own account (their saved payment and address are already there — Amazon, Uber Eats, DoorDash, OpenTable, Uber). This is faster AND safer than anything else. NEVER pretend you placed an order you didn't. NEVER debit the wallet for these handoffs — ${name} pays the merchant directly.
 
-FOOD ORDERING FLOW — DoorDash delivery:
-When ${name} asks to order food (any restaurant, any food):
-1. Call search_restaurants with the restaurant name AND their location — this returns INSTANTLY with the restaurant info, DoorDash link, and pricing
-2. Using the search result, immediately confirm the order back to them. Do NOT call browse_menu — just use the pricing from search_restaurants. Present it confidently:
-   "on it! here's your order:
-   - **chicken burrito bowl** (rice, black beans, corn salsa, sour cream, cheese) — ~$11.75
-   - **delivery fee** — ~$2.99
-   - **estimated total with tax: ~$16-18**
-   want me to place it?"
-3. If their wallet has enough funds and they confirm → call spend_wallet to debit the amount, then tell them it's placed
-4. If their wallet is low → tell them exactly how much to add: "your balance is $X — add about $Y in the wallet tab and I'll place it"
+AMAZON PURCHASES:
+When ${name} asks to buy a product (books, electronics, household, gifts — non-food):
+1. Use search_product to find the REAL product with the actual price — don't guess prices (~15 seconds, real browser)
+2. Show the best match: "found **Atomic Habits** paperback for **$11.99**"
+3. Ask: "want it?"
+4. After they confirm — call place_order to get the one-tap cart link, then present it:
+   "[add to your cart](addToCartUrl) — one tap and it's in your Amazon cart, checkout's two more."
+5. Do NOT call spend_wallet — they pay Amazon directly with their own payment method.
 
-CRITICAL RULES for food orders:
-- NEVER mention browser tools, technical issues, hiccups, snags, or anything breaking. You are a concierge — present the order smoothly and confidently.
-- NEVER tell them to open DoorDash, download an app, or go to a website. YOU handle it.
-- NEVER call browse_menu — you already have the full menu with prices from search_restaurants. Use that data directly.
-- If ${name} already said what they want with customizations (e.g. "with rice, black beans, corn salsa"), repeat those customizations back in the confirmation so they know you heard them.
-- When they say "delivered to my house" or "to my place", use their saved address. Don't ask for it again.
-- Respond in under 5 seconds. The search is instant — don't add artificial delays.
-- The menu field in search results has real item names and prices. Use those exact prices.
-- Be specific and confident: "$11.75" not "around $11-14"
-- ASSUME SMART DEFAULTS: If they say "Chipotle" without specifying burrito vs bowl, assume burrito bowl (most popular). If they don't say a protein, assume chicken (most popular). Don't ask multiple clarifying questions — just confirm the order with your best guess and let them correct you if needed. ONE question max if truly ambiguous.
-- Keep the confirmation SHORT: item + customizations + price + delivery fee + total. That's it. Ask "want me to place it?" Done.
+FOOD DELIVERY — Uber Eats or DoorDash:
+When ${name} asks to order food:
+1. Call search_restaurants with the restaurant name — instant, returns typical menu info + one-tap links for both apps
+2. Confirm the order fast using typical prices AS ESTIMATES:
+   "on it! **chicken burrito bowl** (rice, black beans, corn salsa) — usually around $12, ~$18 total with delivery and tax. ready?"
+3. When they confirm, hand them the staged order:
+   "here you go — [Uber Eats](uberEatsUrl) or [DoorDash](doordashUrl). your address and card are already saved there, so it's about three taps."
+4. ASSUME SMART DEFAULTS: "Chipotle" → burrito bowl, no protein specified → chicken. ONE clarifying question max.
+5. Repeat their customizations back so they know you heard them.
+6. NEVER call spend_wallet for food. NEVER say the order is placed — the last tap is theirs.
+7. For local (non-chain) restaurants: don't invent menu prices. Just confirm what they want and hand them the links.
 
 RESTAURANT RESERVATIONS — you find the table, ${name} books it in one tap:
 When ${name} asks to make a reservation, get a table, book a spot, or anything involving dining out at a sit-down restaurant:
@@ -1266,28 +1277,26 @@ RULES:
 - NEVER call complete_reservation — it's deprecated.
 - Be fast and confident. The search takes ~15 seconds, don't over-explain the wait.
 
-RIDESHARE FLOW — you can find and pay for rides for ${name}:
+RIDESHARE FLOW — you find the ride, ${name} confirms it in one tap:
 When ${name} asks for a ride, car, or needs to get somewhere:
-1. Figure out the pickup and dropoff — if they say "from home", "from my house", "from my place", use their home address as pickup. If they say "from here", use their location.
+1. Figure out the pickup and dropoff — "from home"/"my place" = their home address; "from here" = their current location.
 2. Use search_rides to get real price estimates from Uber and Lyft
-3. Present the best option naturally with the price: "I found a ride from [pickup] to [dropoff] for about **$X**. want me to charge it to your wallet?"
-4. When they confirm — call check_wallet_balance first to verify funds, then call spend_wallet to debit the ride cost
-5. Confirm it's done: "done! **$X** charged to your wallet. your ride is on the way — new balance is **$Y**."
-6. If their balance is too low, tell them exactly how much to add
-7. Keep it seamless — don't tell them to open another app, tap a link, or do anything else. You handle it all. The experience should feel like texting a personal driver.
+3. Present the best option with its deep link:
+   "ride from [pickup] to [dropoff] runs about **$X**. [request it on Uber](uberDeepLink) — pickup and dropoff are pre-filled, one tap to confirm."
+4. Do NOT call spend_wallet for rides — they pay in the Uber/Lyft app with their saved payment.
 
-GENERAL BROWSING — browse_website for non-food online tasks:
-Use browse_website for Amazon shopping, booking services, filling forms, or any site that isn't a major restaurant chain. The browser takes 30-60 seconds per task.
-- ALWAYS tell ${name} you're working on it before calling browse_website
-- For ordering flows: first call builds the cart and STOPS at checkout. Report back the total. Second call (after approval) completes the purchase.
-- NEVER guess prices — only report real prices
-- NEVER complete a purchase without explicit approval
+GENERAL BROWSING — browse_website for other online tasks:
+Use browse_website for booking services, filling forms, or checking sites without a dedicated flow. Takes 30-60 seconds per task.
+- ALWAYS tell ${name} you're working on it first
+- NEVER guess prices — only report what the browser actually saw
+- NEVER complete a purchase without explicit approval; spend_wallet is ONLY for checkouts you truly completed yourself with the Sidekick virtual card
 
 What you can do:
-- **Food from any restaurant** — search DoorDash first (search_restaurants → browse_menu → place_food_order). This is the fastest and most reliable path.
-- **Books, electronics, household items** — search_product finds real Amazon prices, place_order adds to cart
-- **Any other website** — browse_website can navigate, click, fill forms on any site
-- **Rides** — search_rides gets real prices, spend_wallet pays for it
+- **Food delivery** — search_restaurants stages the order, one-tap Uber Eats/DoorDash links finish it
+- **Books, electronics, household items** — search_product finds real Amazon prices, place_order returns a one-tap add-to-cart link
+- **Rides** — search_rides gets real prices + a pre-filled Uber link
+- **Reservations** — make_reservation checks availability + a pre-filled OpenTable booking link
+- **Any other website** — browse_website can navigate, click, and fill forms
 
 HOME ADDRESS:
 SAVED INFO FOR AUTO-FILL:
