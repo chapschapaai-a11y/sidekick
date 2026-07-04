@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { getSessionUserId } from "@/lib/auth";
 
 const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY || "";
-const VOICE_ID = process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM"; // Rachel default
+const VOICE_ID = process.env.ELEVENLABS_VOICE_ID || "cgSgspJ2msm6clMCkdW9"; // Jessica default
 
 export async function POST(req: NextRequest) {
   const userId = await getSessionUserId();
