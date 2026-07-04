@@ -50,6 +50,9 @@ export interface CalendarEvent {
   end: string;
   location?: string;
   allDay: boolean;
+  calendarId?: string;
+  calendarName?: string;
+  readOnly?: boolean;
 }
 
 export async function fetchTodayEvents(userId: string): Promise<CalendarEvent[]> {
@@ -64,8 +67,9 @@ export async function fetchCalendarRange(
   const token = await getGoogleToken(userId);
   if (!token) return [];
 
-  const now = new Date();
-  const start = startDate || new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  // "Today" in the user's timezone, not server UTC (Vercel runs in UTC)
+  const nowET = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
+  const start = startDate || new Date(nowET.getFullYear(), nowET.getMonth(), nowET.getDate());
   const end = endDate || new Date(start.getTime() + 24 * 60 * 60 * 1000);
 
   const params = new URLSearchParams({
@@ -76,27 +80,34 @@ export async function fetchCalendarRange(
     maxResults: "50",
   });
 
-  // Fetch all calendars the user has (primary + subscribed)
+  // Fetch all calendars the user has (primary + subscribed + shared)
   const calListRes = await fetch(
     "https://www.googleapis.com/calendar/v3/users/me/calendarList",
     { headers: { Authorization: `Bearer ${token}` } }
   );
 
-  let calendarIds = ["primary"];
+  interface CalMeta { id: string; name: string; writable: boolean }
+  let calendars: CalMeta[] = [{ id: "primary", name: "Primary", writable: true }];
   if (calListRes.ok) {
     const calListData = await calListRes.json();
     const items = calListData.items || [];
-    calendarIds = items
+    const mapped = items
       .filter((c: Record<string, unknown>) => !c.deleted && c.selected !== false)
-      .map((c: Record<string, unknown>) => c.id as string);
-    if (calendarIds.length === 0) calendarIds = ["primary"];
-    console.error("[CALENDAR] Fetching from", calendarIds.length, "calendars");
+      .map((c: Record<string, unknown>): CalMeta => ({
+        id: c.id as string,
+        name: (c.summaryOverride as string) || (c.summary as string) || (c.id as string),
+        writable: c.accessRole === "owner" || c.accessRole === "writer",
+      }));
+    if (mapped.length > 0) calendars = mapped;
+    console.error("[CALENDAR] Fetching from", calendars.length, "calendars");
+  } else {
+    console.error("[CALENDAR:LIST] Failed:", calListRes.status, "— token may need reconnect; using primary only");
   }
 
   // Fetch events from all calendars in parallel
-  const allFetches = calendarIds.map(async (calId) => {
+  const allFetches = calendars.map(async (cal) => {
     const res = await fetch(
-      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calId)}/events?${params}`,
+      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(cal.id)}/events?${params}`,
       { headers: { Authorization: `Bearer ${token}` } }
     );
     if (!res.ok) return [];
@@ -108,11 +119,22 @@ export async function fetchCalendarRange(
       end: ((e.end as Record<string, string>)?.dateTime || (e.end as Record<string, string>)?.date) as string,
       location: (e.location as string) || undefined,
       allDay: !!(e.start as Record<string, string>)?.date,
+      calendarId: cal.id,
+      calendarName: cal.name,
+      readOnly: !cal.writable,
     })) as CalendarEvent[];
   });
 
   const results = await Promise.all(allFetches);
-  const googleEvents: CalendarEvent[] = results.flat();
+  // Dedupe — the same event can appear on multiple calendars (e.g. invites)
+  const seen = new Set<string>();
+  const googleEvents: CalendarEvent[] = [];
+  for (const e of results.flat()) {
+    const key = `${e.title}|${e.start}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    googleEvents.push(e);
+  }
 
   // Also fetch ICS subscription events for this range
   const subs = await prisma.calendarSubscription.findMany({ where: { userId } });
@@ -181,14 +203,15 @@ export async function createCalendarEvent(
 export async function deleteCalendarEvent(
   userId: string,
   eventId: string,
+  calendarId: string = "primary",
 ): Promise<{ success: boolean; error?: string }> {
   const token = await getGoogleToken(userId);
   if (!token) return { success: false, error: "Google Calendar not connected" };
 
-  console.error("[CALENDAR:DELETE] Attempting to delete event:", eventId);
+  console.error("[CALENDAR:DELETE] Attempting to delete event:", eventId, "from calendar:", calendarId);
 
   const res = await fetch(
-    `https://www.googleapis.com/calendar/v3/calendars/primary/events/${eventId}`,
+    `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
     {
       method: "DELETE",
       headers: { Authorization: `Bearer ${token}` },

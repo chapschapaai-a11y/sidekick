@@ -259,13 +259,17 @@ const SIDEKICK_TOOLS: Anthropic.Tool[] = [
   {
     name: "remove_calendar_event",
     description:
-      "Remove/delete an event from the user's Google Calendar. Use when the user asks to cancel, remove, or delete a calendar event. First use check_calendar to find the event and get its ID, then call this tool with that ID.",
+      "Remove/delete an event from the user's Google Calendar. Use when the user asks to cancel, remove, or delete a calendar event. First use check_calendar to find the event and get its ID AND calendarId, then call this tool with both.",
     input_schema: {
       type: "object" as const,
       properties: {
         eventId: {
           type: "string",
           description: "The Google Calendar event ID to delete",
+        },
+        calendarId: {
+          type: "string",
+          description: "The calendarId the event lives on (from check_calendar results). Defaults to primary if omitted.",
         },
         title: {
           type: "string",
@@ -773,8 +777,12 @@ async function handleToolCall(
           title: e.title,
           start: e.start,
           end: e.end,
+          startLocal: e.allDay ? null : new Date(e.start).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/New_York" }),
           location: e.location || null,
           allDay: e.allDay,
+          calendarId: e.calendarId || "primary",
+          calendarName: e.calendarName || null,
+          readOnly: e.readOnly || false,
         })),
       });
     } catch (e) {
@@ -813,10 +821,10 @@ async function handleToolCall(
   }
 
   if (toolName === "remove_calendar_event") {
-    const { eventId, title } = toolInput as { eventId: string; title?: string };
+    const { eventId, calendarId, title } = toolInput as { eventId: string; calendarId?: string; title?: string };
 
     try {
-      const result = await deleteCalendarEvent(userId, eventId);
+      const result = await deleteCalendarEvent(userId, eventId, calendarId || "primary");
       if (!result.success) {
         return JSON.stringify({ success: false, error: result.error || "Could not delete event" });
       }
@@ -886,7 +894,7 @@ export async function POST(req: NextRequest) {
   const systemPrompt = buildSystemPrompt(user, tasks, weather, calendarEvents, emails, wallet);
 
   let response = await anthropic.messages.create({
-    model: "claude-opus-4-6",
+    model: "claude-opus-4-8",
     max_tokens: 4096,
     system: systemPrompt,
     messages: history.slice(-20),
@@ -895,7 +903,8 @@ export async function POST(req: NextRequest) {
 
   const apiMessages: Anthropic.MessageParam[] = [...history.slice(-20)];
 
-  while (response.stop_reason === "tool_use") {
+  let toolRounds = 0;
+  while (response.stop_reason === "tool_use" && toolRounds++ < 8) {
     const toolBlocks = response.content.filter(
       (b): b is Anthropic.ToolUseBlock => b.type === "tool_use"
     );
@@ -919,7 +928,7 @@ export async function POST(req: NextRequest) {
     apiMessages.push({ role: "user", content: toolResults });
 
     response = await anthropic.messages.create({
-      model: "claude-opus-4-6",
+      model: "claude-opus-4-8",
       max_tokens: 4096,
       system: systemPrompt,
       messages: apiMessages,
@@ -1217,7 +1226,8 @@ CRITICAL CALENDAR RULES — read these carefully:
 - When ${name} asks to REMOVE, DELETE, or CANCEL events: ONLY call remove_calendar_event. Do NOT call add_calendar_event. A remove request means REMOVE ONLY — never add anything back, never "replace" events, never "clean up" by adding new ones.
 - When ${name} says "remove all X events" — find every matching event across all days using check_calendar and delete each one. Do not add any events.
 - To ADD events: ONLY when ${name} uses words like "add", "schedule", "create", "put on my calendar", "book", "set a reminder". NEVER add events unless those exact words (or similar) are used. NEVER add events as a follow-up to a removal. NEVER add events on your own initiative.
-- To REMOVE events: first use check_calendar to find events and get their IDs, then call remove_calendar_event for each one. If ${name} says to remove multiple events, remove ALL of them — don't stop after one or two.
+- To REMOVE events: first use check_calendar to find events and get their id AND calendarId, then call remove_calendar_event with BOTH for each one. If ${name} says to remove multiple events, remove ALL of them — don't stop after one or two.
+- Events with readOnly: true live on subscribed calendars (holidays, sports schedules, etc.) and cannot be deleted — tell ${name} they'd need to unsubscribe from that calendar in Google Calendar instead.
 - If a removal fails, tell ${name} honestly — don't pretend it worked.
 
 HOW TO RESPOND:

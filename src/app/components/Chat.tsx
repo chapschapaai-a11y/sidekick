@@ -39,8 +39,41 @@ export default function Chat({ state }: Props) {
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [playingId, setPlayingId] = useState<string | null>(null);
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const chatBodyRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  async function playMessage(text: string, msgId: string) {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+    if (playingId === msgId) {
+      setPlayingId(null);
+      return;
+    }
+    setPlayingId(msgId);
+    try {
+      const res = await fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      if (res.status === 503) { setVoiceEnabled(false); setPlayingId(null); return; }
+      if (!res.ok) { setPlayingId(null); return; }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audioRef.current = audio;
+      audio.onended = () => { setPlayingId(null); URL.revokeObjectURL(url); audioRef.current = null; };
+      audio.onerror = () => { setPlayingId(null); URL.revokeObjectURL(url); audioRef.current = null; };
+      await audio.play();
+    } catch {
+      setPlayingId(null);
+    }
+  }
 
   useEffect(() => {
     if (loaded) return;
@@ -176,6 +209,9 @@ export default function Chat({ state }: Props) {
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, aiMsg]);
+      if (voiceEnabled && aiMsg.content) {
+        playMessage(aiMsg.content, aiMsg.id);
+      }
       refreshConversations();
     } catch {
       const errMsg: Message = {
@@ -213,6 +249,25 @@ export default function Chat({ state }: Props) {
           <p className="text-xs text-success font-medium">Online</p>
         </div>
         <div className="flex gap-1">
+          <button
+            onClick={() => {
+              const next = !voiceEnabled;
+              setVoiceEnabled(next);
+              if (!next && audioRef.current) {
+                audioRef.current.pause();
+                audioRef.current = null;
+                setPlayingId(null);
+              }
+            }}
+            className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors text-sm ${voiceEnabled ? "text-accent bg-accent/10" : "text-text-muted hover:bg-bg-secondary"}`}
+            title={voiceEnabled ? "Voice on — tap to mute" : "Voice off — tap to enable"}
+          >
+            {voiceEnabled ? (
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+            ) : (
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>
+            )}
+          </button>
           <button
             onClick={() => { setShowHistory(!showHistory); if (!showHistory) refreshConversations(); }}
             className="w-8 h-8 rounded-full flex items-center justify-center text-text-muted hover:bg-bg-secondary transition-colors text-sm"
@@ -285,14 +340,35 @@ export default function Chat({ state }: Props) {
                     className="w-7 h-7 rounded-full object-cover shrink-0 mt-1"
                   />
                 )}
-                <div
-                  className={`max-w-[80%] rounded-[20px] px-4 py-3 text-[15px] leading-relaxed tracking-tight ${
-                    msg.role === "user"
-                      ? "bg-accent text-white rounded-br-[6px]"
-                      : "bg-bg-secondary text-text-primary rounded-bl-[6px]"
-                  }`}
-                >
-                  <MessageContent content={msg.content} />
+                <div className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"}`}>
+                  <div
+                    className={`max-w-[80%] rounded-[20px] px-4 py-3 text-[15px] leading-relaxed tracking-tight ${
+                      msg.role === "user"
+                        ? "bg-accent text-white rounded-br-[6px]"
+                        : "bg-bg-secondary text-text-primary rounded-bl-[6px]"
+                    }`}
+                  >
+                    <MessageContent content={msg.content} />
+                  </div>
+                  {msg.role === "assistant" && msg.id !== "welcome" && (
+                    <button
+                      onClick={() => playMessage(msg.content, msg.id)}
+                      className="mt-1 ml-1 flex items-center gap-1 text-[11px] text-text-muted hover:text-text-primary transition-colors"
+                      title={playingId === msg.id ? "Stop" : "Play"}
+                    >
+                      {playingId === msg.id ? (
+                        <span className="flex items-center gap-1">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
+                          playing...
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                          listen
+                        </span>
+                      )}
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
