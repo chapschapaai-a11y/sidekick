@@ -1,57 +1,29 @@
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { getSessionUserId } from "@/lib/auth";
-import WS from "ws";
+import { chromium } from "playwright-core";
 
-function navigateCDP(connectUrl: string, url: string): Promise<{ success: boolean; error?: string }> {
-  return new Promise((resolve) => {
-    const timeout = setTimeout(() => {
-      resolve({ success: false, error: "CDP connection timed out after 15s" });
-    }, 15000);
-
-    let ws: WS;
+async function navigateSession(connectUrl: string, url: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const browser = await chromium.connectOverCDP(connectUrl, { timeout: 15000 });
     try {
-      ws = new WS(connectUrl);
-    } catch (e) {
-      clearTimeout(timeout);
-      resolve({ success: false, error: `WebSocket creation failed: ${e}` });
-      return;
-    }
-
-    ws.on("open", () => {
-      ws.send(JSON.stringify({
-        id: 1,
-        method: "Page.navigate",
-        params: { url },
-      }));
-    });
-
-    ws.on("message", (raw) => {
+      const context = browser.contexts()[0];
+      const page = context?.pages()[0];
+      if (!page) return { success: false, error: "No page in session" };
       try {
-        const data = JSON.parse(String(raw));
-        if (data.id === 1) {
-          clearTimeout(timeout);
-          if (data.error) {
-            resolve({ success: false, error: `CDP navigate error: ${JSON.stringify(data.error)}` });
-          } else {
-            resolve({ success: true });
-          }
-        }
+        await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 });
       } catch {
-        // ignore non-JSON frames
+        // Some login pages hang domcontentloaded on redirects — commit is enough for the live view
+        await page.goto(url, { waitUntil: "commit", timeout: 10000 });
       }
-    });
-
-    ws.on("error", (err) => {
-      clearTimeout(timeout);
-      resolve({ success: false, error: `WebSocket error: ${err.message}` });
-    });
-
-    ws.on("close", (code, reason) => {
-      clearTimeout(timeout);
-      resolve({ success: false, error: `WebSocket closed: ${code} ${reason}` });
-    });
-  });
+      return { success: true };
+    } finally {
+      // Disconnect the client only — keepAlive keeps the session (and page) running for the live view
+      await browser.close().catch(() => {});
+    }
+  } catch (e) {
+    return { success: false, error: String(e).slice(0, 200) };
+  }
 }
 
 const LOGIN_URLS: Record<string, string> = {
@@ -127,7 +99,7 @@ export async function POST(req: NextRequest) {
     });
 
     step = "navigating to login page";
-    const navResult = await navigateCDP(session.connectUrl!, LOGIN_URLS[provider]);
+    const navResult = await navigateSession(session.connectUrl!, LOGIN_URLS[provider]);
 
     return Response.json({
       sessionId: session.id,

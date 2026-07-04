@@ -79,6 +79,30 @@ const SIDEKICK_TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: "place_food_order",
+    description:
+      "ACTUALLY place a food delivery order start-to-finish using the user's connected DoorDash or Uber Eats account (their saved address and payment). Call ONLY after the user confirms exactly what they want. Takes 2-4 minutes. If no delivery account is connected, returns needsConnection — then fall back to handoff links.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        restaurant: {
+          type: "string",
+          description: "Restaurant name (e.g. 'Chipotle')",
+        },
+        items: {
+          type: "string",
+          description: "Exactly what to order, with all customizations (e.g. '1x chicken burrito bowl with white rice, black beans, corn salsa, cheese, no sour cream')",
+        },
+        service: {
+          type: "string",
+          enum: ["doordash", "ubereats"],
+          description: "Which delivery service to use, if the user has a preference. Defaults to whichever is connected.",
+        },
+      },
+      required: ["restaurant", "items"],
+    },
+  },
+  {
     name: "search_restaurants",
     description:
       "Look up a restaurant for food delivery. Returns typical menu/pricing info for national chains plus one-tap Uber Eats and DoorDash links. Use ONLY when the user wants to order FOOD for delivery — meals, drinks, groceries from restaurants. Do NOT use for books, electronics, or non-food items (use search_product for those).",
@@ -110,29 +134,6 @@ const SIDEKICK_TOOLS: Anthropic.Tool[] = [
         },
       },
       required: ["address"],
-    },
-  },
-  {
-    name: "place_food_order",
-    description:
-      "Add a menu item to the DoorDash cart. Call ONLY after the user confirms what they want to order. Navigates to the restaurant page and adds the item.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        restaurantUrl: {
-          type: "string",
-          description: "The DoorDash restaurant URL",
-        },
-        itemName: {
-          type: "string",
-          description: "The exact menu item name to add to cart",
-        },
-        restaurantName: {
-          type: "string",
-          description: "The restaurant name for the transaction record",
-        },
-      },
-      required: ["restaurantUrl", "itemName", "restaurantName"],
     },
   },
   {
@@ -459,6 +460,73 @@ async function handleToolCall(
     });
   }
 
+  if (toolName === "place_food_order") {
+    const { restaurant, items, service } = toolInput as { restaurant: string; items: string; service?: string };
+
+    try {
+      // Find a connected delivery account (persistent logged-in browser context)
+      const candidates = service ? [service] : ["doordash", "ubereats"];
+      const integrations = await prisma.integration.findMany({
+        where: { userId, provider: { in: candidates } },
+      });
+      const connected = integrations.find((i) => i.browserContextId);
+
+      if (!connected) {
+        return JSON.stringify({
+          needsConnection: true,
+          _nextStep: "No delivery account is connected. Give the user the Uber Eats/DoorDash handoff links from search_restaurants instead, AND tell them: connect DoorDash or Uber Eats once in the apps tab, and from then on you can place orders for them completely — one message, done.",
+        });
+      }
+
+      const user = await prisma.user.findUnique({ where: { id: userId } });
+      const serviceName = connected.provider === "doordash" ? "DoorDash" : "Uber Eats";
+      const startUrl = connected.provider === "doordash" ? "https://www.doordash.com/home" : "https://www.ubereats.com/feed";
+
+      console.error("[FOOD_ORDER] Placing on", serviceName, "restaurant:", restaurant, "items:", items);
+
+      const { browseWebsite } = await getBrowserbase();
+      const result = await browseWebsite(
+        startUrl,
+        `You are in the user's logged-in ${serviceName} account. Place this delivery order COMPLETELY:\n` +
+        `RESTAURANT: ${restaurant}\n` +
+        `ORDER: ${items}\n` +
+        `Steps: 1) If you see a login or sign-in page, STOP and return failed with reason "not-logged-in". ` +
+        `2) Search for the restaurant and open its store page. ` +
+        `3) Add the items with the exact customizations listed. ` +
+        `4) Go to checkout — use the account's saved delivery address${user?.homeAddress ? ` (should match: ${user.homeAddress})` : ""} and saved payment method. ` +
+        `5) PLACE the order (click the final Place Order button). ` +
+        `6) Return "done" with: ORDER TOTAL: $X.XX | ETA: [estimated delivery time] | CONFIRMATION: [any confirmation shown].`,
+        { name: user?.name || undefined, phone: user?.phone || undefined, address: user?.homeAddress || undefined },
+        connected.browserContextId!,
+        undefined,
+        { allowFinalSubmit: true },
+      );
+
+      if (!result.success) {
+        const notLoggedIn = (result.summary || "").toLowerCase().includes("not-logged-in") || (result.error || "").toLowerCase().includes("log");
+        return JSON.stringify({
+          success: false,
+          service: serviceName,
+          error: notLoggedIn
+            ? `The ${serviceName} session expired — tell the user to reconnect ${serviceName} in the apps tab (takes 30 seconds), then you can order again.`
+            : `Could not complete the order: ${result.error || result.summary || "unknown error"}. Offer the handoff links instead.`,
+        });
+      }
+
+      return JSON.stringify({
+        success: true,
+        service: serviceName,
+        restaurant,
+        items,
+        details: result.summary,
+        _nextStep: "Tell the user the order is PLACED for real — include the total and ETA from details. Paid with their saved payment on " + serviceName + ", not the wallet.",
+      });
+    } catch (e) {
+      console.error("[FOOD_ORDER] error:", e);
+      return JSON.stringify({ success: false, error: "Order automation failed", detail: String(e) });
+    }
+  }
+
   if (toolName === "search_restaurants") {
     const { query, location } = toolInput as { query: string; location: string };
     const q = query.toLowerCase().trim();
@@ -587,37 +655,6 @@ async function handleToolCall(
       return JSON.stringify({ restaurantName, items });
     } catch (e) {
       return JSON.stringify({ error: "Menu browsing failed.", detail: String(e) });
-    }
-  }
-
-  if (toolName === "place_food_order") {
-    const { restaurantUrl, itemName, restaurantName } = toolInput as { restaurantUrl: string; itemName: string; restaurantName: string };
-    try {
-      const { browseWebsite } = await getBrowserbase();
-      const result = await browseWebsite(
-        restaurantUrl,
-        `Add "${itemName}" to the DoorDash cart from this restaurant page. ` +
-        `Steps: 1) Find the menu item "${itemName}" on the page and click it. ` +
-        `2) If a customization/options modal appears, select reasonable defaults and click "Add to Cart" or similar. ` +
-        `3) After adding to cart, check the cart for the total price. ` +
-        `4) DO NOT click "Place Order" or "Checkout" — stop before finalizing. ` +
-        `Return "done" with: ITEM: [name] | TOTAL: $[X.XX] | STATUS: added to cart`
-      );
-
-      if (result.success) {
-        const totalMatch = result.summary?.match(/TOTAL:\s*\$?([\d.]+)/i);
-        const total = totalMatch ? parseFloat(totalMatch[1]) : 0;
-        return JSON.stringify({
-          success: true,
-          description: `${itemName} from ${restaurantName}`,
-          total,
-          vendor: `DoorDash — ${restaurantName}`,
-          summary: result.summary,
-        });
-      }
-      return JSON.stringify({ success: false, error: result.summary || "Failed to add item to cart", vendor: `DoorDash — ${restaurantName}` });
-    } catch (e) {
-      return JSON.stringify({ success: false, error: "Failed to add food to cart", detail: String(e) });
     }
   }
 
@@ -1238,8 +1275,11 @@ ${taskContext}${doneContext}
 WALLET:
 ${wallet ? `Balance: $${wallet.balance.toFixed(2)}${wallet.cardLast4 ? ` | Funding card: ${wallet.cardBrand} •••• ${wallet.cardLast4}` : ""}${wallet.virtualCardReady ? ` | Virtual debit card: •••• ${wallet.virtualCardLast4} (ready for online purchases)` : " | No virtual card yet — tell them to activate it in the wallet tab"}` : "No wallet set up yet."}
 
-THE ONE-TAP PATTERN — how all commerce works:
-You do the finding, deciding, and staging. ${name} does ONE tap to pay in their own account (their saved payment and address are already there — Amazon, Uber Eats, DoorDash, OpenTable, Uber). This is faster AND safer than anything else. NEVER pretend you placed an order you didn't. NEVER debit the wallet for these handoffs — ${name} pays the merchant directly.
+HOW COMMERCE WORKS:
+Two modes, always honest:
+- **Connected accounts (full one-touch):** if ${name} connected a service in the apps tab (DoorDash, Uber Eats), you place orders START TO FINISH in their logged-in account with their saved payment. This is the premium experience — use it whenever available.
+- **Handoff links (everything else):** you find, decide, and stage; ${name} does one tap to pay in their own app (Amazon cart links, OpenTable booking links, Uber ride links).
+NEVER pretend you placed an order you didn't. NEVER debit the Sidekick wallet for any of this — ${name} pays the merchant directly.
 
 AMAZON PURCHASES:
 When ${name} asks to buy a product (books, electronics, household, gifts — non-food):
@@ -1252,15 +1292,16 @@ When ${name} asks to buy a product (books, electronics, household, gifts — non
 
 FOOD DELIVERY — Uber Eats or DoorDash:
 When ${name} asks to order food:
-1. Call search_restaurants with the restaurant name — instant, returns typical menu info + one-tap links for both apps
+1. Call search_restaurants with the restaurant name — instant, returns typical menu info + links
 2. Confirm the order fast using typical prices AS ESTIMATES:
    "on it! **chicken burrito bowl** (rice, black beans, corn salsa) — usually around $12, ~$18 total with delivery and tax. ready?"
-3. When they confirm, hand them the staged order:
-   "here you go — [Uber Eats](uberEatsUrl) or [DoorDash](doordashUrl). your address and card are already saved there, so it's about three taps."
-4. ASSUME SMART DEFAULTS: "Chipotle" → burrito bowl, no protein specified → chicken. ONE clarifying question max.
-5. Repeat their customizations back so they know you heard them.
-6. NEVER call spend_wallet for food. NEVER say the order is placed — the last tap is theirs.
-7. For local (non-chain) restaurants: don't invent menu prices. Just confirm what they want and hand them the links.
+3. When they confirm → call place_food_order with the exact items + customizations. Say "placing it now — give me 2-3 minutes" first.
+4. place_food_order uses ${name}'s own logged-in DoorDash/Uber Eats account (their saved address + payment). When it succeeds, report the REAL total and ETA from the result: "placed! **$17.43**, arriving ~6:45pm."
+5. If it returns needsConnection: give the [Uber Eats](uberEatsUrl) / [DoorDash](doordashUrl) links from search_restaurants so they can order in 3 taps, and pitch the upgrade once: "connect DoorDash in the apps tab (30 seconds, one time) and next time I'll place it start to finish."
+6. If it fails or the session expired: be honest, give the handoff links, and tell them to reconnect in the apps tab.
+7. ASSUME SMART DEFAULTS: "Chipotle" → burrito bowl, no protein → chicken. ONE clarifying question max. Repeat customizations back.
+8. NEVER call spend_wallet for food — they pay through their delivery account. NEVER claim an order is placed unless place_food_order returned success.
+9. For local (non-chain) restaurants: don't invent menu prices — confirm what they want, then place_food_order (the browser sees the real menu).
 
 RESTAURANT RESERVATIONS — you find the table, ${name} books it in one tap:
 When ${name} asks to make a reservation, get a table, book a spot, or anything involving dining out at a sit-down restaurant:
@@ -1292,7 +1333,7 @@ Use browse_website for booking services, filling forms, or checking sites withou
 - NEVER complete a purchase without explicit approval; spend_wallet is ONLY for checkouts you truly completed yourself with the Sidekick virtual card
 
 What you can do:
-- **Food delivery** — search_restaurants stages the order, one-tap Uber Eats/DoorDash links finish it
+- **Food delivery** — place_food_order places it start-to-finish via connected accounts; search_restaurants stages estimates + handoff links
 - **Books, electronics, household items** — search_product finds real Amazon prices, place_order returns a one-tap add-to-cart link
 - **Rides** — search_rides gets real prices + a pre-filled Uber link
 - **Reservations** — make_reservation checks availability + a pre-filled OpenTable booking link
