@@ -491,11 +491,13 @@ async function handleToolCall(
         `RESTAURANT: ${restaurant}\n` +
         `ORDER: ${items}\n` +
         `Steps: 1) If you see a login or sign-in page, STOP and return failed with reason "not-logged-in". ` +
-        `2) Search for the restaurant and open its store page. ` +
-        `3) Add the items with the exact customizations listed. ` +
-        `4) Go to checkout — use the account's saved delivery address${user?.homeAddress ? ` (should match: ${user.homeAddress})` : ""} and saved payment method. ` +
-        `5) PLACE the order (click the final Place Order button). ` +
-        `6) Return "done" with: ORDER TOTAL: $X.XX | ETA: [estimated delivery time] | CONFIRMATION: [any confirmation shown].`,
+        `2) FIRST confirm a delivery address is set (shown in the header)${user?.homeAddress ? ` — it should be ${user.homeAddress}; select it if prompted` : ""}. Menu items will not open without an address. ` +
+        `3) Search for the restaurant and open its store page — verify the store location is near the delivery address, not another city. ` +
+        `4) Click a menu item to open its customization modal. If a click times out, press the Escape key to dismiss any overlay, scroll the item fully into view, and try again. ` +
+        `5) Add the items with the exact customizations listed. ` +
+        `6) Go to checkout — use the saved delivery address and saved payment method. ` +
+        `7) PLACE the order (click the final Place Order button). ` +
+        `8) Return "done" with: ORDER TOTAL: $X.XX | ETA: [estimated delivery time] | CONFIRMATION: [any confirmation shown].`,
         { name: user?.name || undefined, phone: user?.phone || undefined, address: user?.homeAddress || undefined },
         connected.browserContextId!,
         undefined,

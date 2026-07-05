@@ -20,6 +20,7 @@ export async function createBrowserSession(contextId?: string) {
     projectId: process.env.BROWSERBASE_PROJECT_ID!,
     browserSettings,
     proxies: true,
+    timeout: 900, // long agent tasks (food ordering) need more than the 5-min project default
   };
 
   const session = await bb.sessions.create(sessionOptions);
@@ -562,7 +563,10 @@ export async function browseWebsite(
 ): Promise<BrowseResult> {
   const anthropic = new Anthropic();
   console.error("[BROWSE:1] Creating browser session...");
-  const { browser, page, sessionId } = await createBrowserSession(contextId);
+  const handles = await createBrowserSession(contextId);
+  const browser = handles.browser;
+  const sessionId = handles.sessionId;
+  let page = handles.page;
   console.error("[BROWSE:2] Session created:", sessionId);
 
   try {
@@ -709,48 +713,59 @@ export async function browseWebsite(
     const MAX_STEPS = 30;
 
     for (let step = 0; step < MAX_STEPS; step++) {
+      // Sites like DoorDash sometimes close the current target and continue in a
+      // new one — recover by switching to the newest live page instead of dying.
+      if (page.isClosed()) {
+        const livePages = browser.contexts().flatMap((c) => c.pages()).filter((p) => !p.isClosed());
+        if (livePages.length === 0) {
+          throw new Error("Browser session ended unexpectedly (all pages closed)");
+        }
+        page = livePages[livePages.length - 1];
+        console.error("[BROWSE:RECOVER] Page was closed — switched to newest live page:", page.url());
+        await page.waitForTimeout(1500).catch(() => {});
+      }
+
       const title = await page.title().catch(() => "");
       const currentUrl = page.url();
 
-      const interactiveElements: string[] = [];
-      const elements = await page.locator("a, button, input, select, textarea, [role='button'], [role='link'], [role='menuitem'], [role='tab'], [role='option'], [role='checkbox'], [role='radio']").all();
+      // Scan all interactive elements in ONE page round-trip (the old per-element
+      // locator approach made hundreds of CDP calls and blew the session timeout).
+      // Each visible element gets tagged with data-sk-idx so actions can target it.
+      const interactiveElements: string[] = await page.evaluate(() => {
+        const els = document.querySelectorAll(
+          "a, button, input, select, textarea, [role='button'], [role='link'], [role='menuitem'], [role='tab'], [role='option'], [role='checkbox'], [role='radio']"
+        );
+        const out: string[] = [];
+        let idx = 0;
+        for (const node of Array.from(els)) {
+          if (out.length >= 80) break;
+          const el = node as HTMLElement;
+          const rect = el.getBoundingClientRect();
+          if (rect.width === 0 || rect.height === 0) continue;
+          const style = getComputedStyle(el);
+          if (style.visibility === "hidden" || style.display === "none") continue;
 
-      for (let i = 0; i < Math.min(elements.length, 80); i++) {
-        try {
-          const el = elements[i];
-          const visible = await el.isVisible().catch(() => false);
-          if (!visible) continue;
-
-          const tag = await el.evaluate((e) => e.tagName.toLowerCase()).catch(() => "");
-          const text = await el.textContent({ timeout: 500 }).catch(() => "");
-          const placeholder = await el.getAttribute("placeholder").catch(() => "");
-          const ariaLabel = await el.getAttribute("aria-label").catch(() => "");
-          const type = await el.getAttribute("type").catch(() => "");
-          const href = await el.getAttribute("href").catch(() => "");
-          const name = await el.getAttribute("name").catch(() => "");
-          const id = await el.getAttribute("id").catch(() => "");
-          const value = await el.inputValue().catch(() => "");
-          const checked = await el.isChecked().catch(() => null);
-
-          const label = (text || "").trim().slice(0, 100);
+          el.setAttribute("data-sk-idx", String(idx));
+          const input = el as HTMLInputElement;
+          const label = (el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 100);
+          const href = el.getAttribute("href") || "";
           const desc = [
-            tag,
-            type ? `type=${type}` : "",
-            id ? `id="${id}"` : "",
-            name ? `name="${name}"` : "",
-            placeholder ? `placeholder="${placeholder}"` : "",
-            ariaLabel ? `aria-label="${ariaLabel}"` : "",
+            el.tagName.toLowerCase(),
+            input.type ? `type=${input.type}` : "",
+            el.id ? `id="${el.id}"` : "",
+            input.name ? `name="${input.name}"` : "",
+            el.getAttribute("placeholder") ? `placeholder="${el.getAttribute("placeholder")}"` : "",
+            el.getAttribute("aria-label") ? `aria-label="${el.getAttribute("aria-label")}"` : "",
             href ? `href="${href.slice(0, 80)}"` : "",
             label ? `"${label}"` : "",
-            value ? `value="${value.slice(0, 50)}"` : "",
-            checked === true ? "checked" : "",
+            input.value && input.tagName !== "BUTTON" ? `value="${String(input.value).slice(0, 50)}"` : "",
+            input.checked === true ? "checked" : "",
           ].filter(Boolean).join(" ");
-
-          interactiveElements.push(`[${i}] ${desc}`);
-        } catch {
-          continue;
+          out.push(`[${idx}] ${desc}`);
+          idx++;
         }
-      }
+        return out;
+      }).catch(() => [] as string[]);
 
       const pageText = await page.locator("body").textContent({ timeout: 5000 }).catch(() => "");
       const visibleText = (pageText || "").replace(/\s+/g, " ").trim().slice(0, 3000);
@@ -849,21 +864,24 @@ RULES:
       }
 
       try {
+        const idxSelector = (() => {
+          const m = browserAction.selector?.match(/^\[(\d+)\]$/);
+          return m ? `[data-sk-idx="${m[1]}"]` : null;
+        })();
+
         if (browserAction.action === "navigate" && browserAction.url) {
           await page.goto(browserAction.url, { waitUntil: "domcontentloaded", timeout: 25000 });
           await page.waitForTimeout(2000);
         } else if (browserAction.action === "click") {
-          const indexMatch = browserAction.selector?.match(/^\[(\d+)\]$/);
-          if (indexMatch && elements[parseInt(indexMatch[1])]) {
-            await elements[parseInt(indexMatch[1])].click({ timeout: 5000 });
+          if (idxSelector) {
+            await page.locator(idxSelector).first().click({ timeout: 5000 });
           } else if (browserAction.selector) {
             await page.locator(browserAction.selector).first().click({ timeout: 5000 });
           }
           await page.waitForTimeout(1500);
         } else if (browserAction.action === "type" && browserAction.text) {
-          const indexMatch = browserAction.selector?.match(/^\[(\d+)\]$/);
-          if (indexMatch && elements[parseInt(indexMatch[1])]) {
-            await elements[parseInt(indexMatch[1])].fill(browserAction.text);
+          if (idxSelector) {
+            await page.locator(idxSelector).first().fill(browserAction.text);
           } else if (browserAction.selector) {
             await page.locator(browserAction.selector).first().fill(browserAction.text);
           } else {
@@ -871,9 +889,8 @@ RULES:
           }
           await page.waitForTimeout(800);
         } else if (browserAction.action === "select" && browserAction.selector && browserAction.text) {
-          const indexMatch = browserAction.selector?.match(/^\[(\d+)\]$/);
-          if (indexMatch && elements[parseInt(indexMatch[1])]) {
-            await elements[parseInt(indexMatch[1])].selectOption({ label: browserAction.text });
+          if (idxSelector) {
+            await page.locator(idxSelector).first().selectOption({ label: browserAction.text });
           } else if (browserAction.selector) {
             await page.locator(browserAction.selector).first().selectOption({ label: browserAction.text });
           }
@@ -899,7 +916,8 @@ RULES:
           role: "assistant",
           content: `{"action": "wait", "summary": "Retrying after error"}`,
         });
-        await page.waitForTimeout(1000);
+        // page may have died mid-action — never let the recovery wait itself throw
+        await page.waitForTimeout(1000).catch(() => {});
       }
     }
 
@@ -1098,7 +1116,7 @@ export async function completeOpenTableReservation(
       const currentUrl = page.url();
 
       const interactiveElements: string[] = [];
-      const elements = await page.locator("a, button, input, select, textarea, [role='button'], [role='link'], [role='menuitem'], [role='tab'], [role='option'], [role='checkbox'], [role='radio']").all();
+      const elements = await page.locator("a, button, input, select, textarea, [role='button'], [role='link'], [role='menuitem'], [role='tab'], [role='option'], [role='checkbox'], [role='radio']").all().catch(() => []);
 
       for (let i = 0; i < Math.min(elements.length, 80); i++) {
         try {
