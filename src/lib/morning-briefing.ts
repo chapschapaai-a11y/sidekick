@@ -159,6 +159,9 @@ export async function generateAndSendBriefing(userId: string): Promise<{ sent: b
   if (!user || !user.phone) {
     return { sent: false, error: "User not found or no phone number" };
   }
+  if (!user.smsConsent) {
+    return { sent: false, error: "User has not opted into SMS" };
+  }
 
   const [weather, events] = await Promise.all([
     getWeather(user.location || "Salem, MA", user.latitude, user.longitude),
@@ -211,6 +214,7 @@ export async function getUsersForBriefing(): Promise<string[]> {
     where: {
       morningBriefing: true,
       phone: { not: null },
+      smsConsent: true,
     },
     select: { id: true, wakeTime: true, timezone: true },
   });

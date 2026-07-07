@@ -146,7 +146,7 @@ export default function Onboarding({ state, onUpdate, onComplete }: Props) {
     </StepWrapper>,
 
     // 2: Phone number
-    <StepWrapper key="contact" title="What's your phone number?" hint="Your Sidekick uses this to text you briefings, reminders, and updates." onNext={next} onBack={back} canNext={state.phone.length > 6 && state.smsConsent}>
+    <StepWrapper key="contact" title="What's your phone number?" hint="Your Sidekick uses this to text you briefings, reminders, and updates." onNext={next} onBack={back} canNext={state.phone.length > 6}>
       <div className="flex flex-col gap-5">
         <div>
           <div className="text-[13px] font-semibold text-accent-light mb-1.5">Phone number</div>
@@ -167,10 +167,11 @@ export default function Onboarding({ state, onUpdate, onComplete }: Props) {
             className="mt-1 w-4 h-4 accent-accent shrink-0"
           />
           <span className="text-[13px] text-text-muted leading-relaxed">
-            I agree to receive recurring automated text messages from Sidekick at the number
-            provided (daily briefings, reminders, confirmations, and account updates). Consent is
-            not a condition of purchase. Message frequency varies. Message &amp; data rates may
-            apply. Reply HELP for help or STOP to cancel anytime.{" "}
+            <strong>Optional:</strong> I agree to receive recurring automated text messages from
+            Sidekick at the number provided (daily briefings, reminders, confirmations, and
+            account updates). Consent is not required to use Sidekick or as a condition of any
+            purchase — you can skip this and still use the app. Message frequency varies. Message
+            &amp; data rates may apply. Reply HELP for help or STOP to cancel anytime.{" "}
             <a href="/sms-consent" target="_blank" className="text-accent underline">SMS Terms</a>
             {" "}&amp;{" "}
             <a href="/privacy" target="_blank" className="text-accent underline">Privacy Policy</a>.

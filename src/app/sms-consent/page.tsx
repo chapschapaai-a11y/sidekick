@@ -50,10 +50,12 @@ export default function SMSConsentPage() {
           How You Opt In
         </h2>
         <p>
-          SMS consent is collected during account onboarding through an explicit, unchecked-by-default
-          checkbox. When you enter your phone number, you must actively check the consent box below
-          before SMS messaging is enabled. No messages are sent unless this box is checked. You may
-          also opt in by texting START to our phone number. Consent is not a condition of any purchase.
+          SMS consent is collected during account onboarding through an explicit, <strong>optional</strong>,
+          unchecked-by-default checkbox. Agreeing to receive messages is entirely optional — you can
+          complete signup and use every Sidekick feature without checking the box, and no SMS messages
+          will ever be sent to you unless you actively check it. Consent is not a condition of signing
+          up, of using the service, or of any purchase. You may also opt in later by texting START to
+          our phone number, or opt out anytime by texting STOP.
         </p>
         <p style={{ marginTop: 16, marginBottom: 8, fontSize: 14, color: "#a09888" }}>
           This is the exact opt-in screen shown in the Sidekick app:
@@ -103,10 +105,11 @@ export default function SMSConsentPage() {
               }}
             />
             <div style={{ fontSize: 11.5, color: "#6e6e73" }}>
-              I agree to receive recurring automated text messages from Sidekick at the number
-              provided (daily briefings, reminders, confirmations, and account updates). Consent is
-              not a condition of purchase. Message frequency varies. Message &amp; data rates may
-              apply. Reply HELP for help or STOP to cancel anytime.{" "}
+              <strong>Optional:</strong> I agree to receive recurring automated text messages from
+              Sidekick at the number provided (daily briefings, reminders, confirmations, and
+              account updates). Consent is not required to use Sidekick or as a condition of any
+              purchase — you can skip this and still use the app. Message frequency varies.
+              Message &amp; data rates may apply. Reply HELP for help or STOP to cancel anytime.{" "}
               <span style={{ color: "#b8860b", textDecoration: "underline" }}>SMS Terms</span> &amp;{" "}
               <span style={{ color: "#b8860b", textDecoration: "underline" }}>Privacy Policy</span>.
             </div>
@@ -114,8 +117,8 @@ export default function SMSConsentPage() {
           <div
             style={{
               marginTop: 20,
-              backgroundColor: "#e5e5ea",
-              color: "#aeaeb2",
+              backgroundColor: "#1a1a1a",
+              color: "#ffffff",
               textAlign: "center",
               borderRadius: 24,
               padding: "12px 0",
@@ -123,7 +126,10 @@ export default function SMSConsentPage() {
               fontWeight: 600,
             }}
           >
-            Continue (disabled until box is checked)
+            Continue
+          </div>
+          <div style={{ marginTop: 8, fontSize: 10.5, color: "#8e8e93", textAlign: "center" }}>
+            Signup continues whether or not the box is checked — the checkbox only controls SMS.
           </div>
         </div>
       </section>
