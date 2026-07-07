@@ -501,17 +501,20 @@ async function handleToolCall(
         { name: user?.name || undefined, phone: user?.phone || undefined, address: user?.homeAddress || undefined },
         connected.browserContextId!,
         undefined,
-        { allowFinalSubmit: true },
+        { allowFinalSubmit: true, deadlineMs: 220000 },
       );
 
       if (!result.success) {
         const notLoggedIn = (result.summary || "").toLowerCase().includes("not-logged-in") || (result.error || "").toLowerCase().includes("log");
+        const outOfTime = result.error === "deadline-exceeded";
         return JSON.stringify({
           success: false,
           service: serviceName,
           error: notLoggedIn
             ? `The ${serviceName} session expired — tell the user to reconnect ${serviceName} in the apps tab (takes 30 seconds), then you can order again.`
-            : `Could not complete the order: ${result.error || result.summary || "unknown error"}. Offer the handoff links instead.`,
+            : outOfTime
+              ? `Ran out of time before finishing — the order was NOT placed (no Place Order button was clicked, nothing was charged). Tell the user honestly and offer to try again or use the handoff links.`
+              : `Could not complete the order: ${result.error || result.summary || "unknown error"}. Offer the handoff links instead.`,
         });
       }
 

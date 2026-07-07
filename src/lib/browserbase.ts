@@ -559,9 +559,10 @@ export async function browseWebsite(
   autofill?: { name?: string; email?: string; phone?: string; address?: string },
   contextId?: string,
   paymentCard?: { number: string; expMonth: number; expYear: number; cvc: string },
-  options?: { allowFinalSubmit?: boolean; openTableSearch?: string },
+  options?: { allowFinalSubmit?: boolean; openTableSearch?: string; deadlineMs?: number },
 ): Promise<BrowseResult> {
   const anthropic = new Anthropic();
+  const browseStart = Date.now();
   console.error("[BROWSE:1] Creating browser session...");
   const handles = await createBrowserSession(contextId);
   const browser = handles.browser;
@@ -713,6 +714,19 @@ export async function browseWebsite(
     const MAX_STEPS = 30;
 
     for (let step = 0; step < MAX_STEPS; step++) {
+      // Wrap up before the serverless function gets killed mid-order — an honest
+      // failure with context beats a silent 504.
+      if (options?.deadlineMs && Date.now() - browseStart > options.deadlineMs) {
+        console.error("[BROWSE:DEADLINE] Out of time at step", step);
+        return {
+          success: false,
+          summary: `Ran out of time after ${step} steps. The task was still in progress and no final action was taken.`,
+          currentUrl: page.url(),
+          pageTitle: await page.title().catch(() => ""),
+          error: "deadline-exceeded",
+        };
+      }
+
       // Sites like DoorDash sometimes close the current target and continue in a
       // new one — recover by switching to the newest live page instead of dying.
       if (page.isClosed()) {

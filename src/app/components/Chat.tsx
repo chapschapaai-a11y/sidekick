@@ -218,26 +218,29 @@ export default function Chat({ state }: Props) {
     setIsTyping(true);
 
     const lower = text.trim().toLowerCase();
-    if (lower.match(/order.*from\s+(pizza|chipotle|domino|panera|mcdonald|taco|wendy|subway|chick-fil|starbuck|dunkin)/i)) {
-      setTypingStatus("browsing the website & building your order...");
-      setTimeout(() => { if (isTyping) setTypingStatus("still working — navigating menus..."); }, 15000);
-      setTimeout(() => { if (isTyping) setTypingStatus("almost there — adding items to cart..."); }, 30000);
-    } else if (lower.match(/order|food|pizza|burger|sushi|thai|chinese|mexican|delivery|doordash|uber eats|hungry/)) {
-      setTypingStatus("searching restaurants...");
+    const orderStages = () => {
+      setTypingStatus("on it...");
+      const stages: [number, string][] = [
+        [8000, "found the restaurant — setting up your order..."],
+        [30000, "ordering through your connected account — about 2 more minutes..."],
+        [75000, "adding your items to the cart..."],
+        [130000, "checking out with your saved payment..."],
+        [200000, "wrapping up — almost there..."],
+      ];
+      for (const [ms, msg] of stages) setTimeout(() => setTypingStatus(msg), ms);
+    };
+    if (lower.match(/order|food|pizza|burger|sushi|thai|chinese|mexican|delivery|doordash|uber eats|hungry|chipotle|burrito|bowl/)) {
+      orderStages();
+    } else if (lower.match(/yes|grab it|do it|go ahead|confirm|place the order|place it|try.*again|approve/)) {
+      orderStages();
     } else if (lower.match(/menu|what do they have|what's on the menu/)) {
       setTypingStatus("browsing menu...");
     } else if (lower.match(/reserv|table for|dinner at|book.*restaurant|get me.*at\s/)) {
       setTypingStatus("looking up the restaurant...");
-    } else if (lower.match(/inside|outside|patio|bar seat|no preference|outdoor|indoor/)) {
-      setTypingStatus("booking your table...");
-      setTimeout(() => { if (isTyping) setTypingStatus("navigating the reservation site..."); }, 10000);
-      setTimeout(() => { if (isTyping) setTypingStatus("filling in your details..."); }, 30000);
-      setTimeout(() => { if (isTyping) setTypingStatus("almost there — confirming..."); }, 50000);
+      setTimeout(() => setTypingStatus("checking availability..."), 10000);
     } else if (lower.match(/buy|amazon|purchase|order me/)) {
       setTypingStatus("searching products...");
-    } else if (lower.match(/yes|grab it|do it|go ahead|confirm|place the order|place it|approve/)) {
-      setTypingStatus("placing your order...");
-      setTimeout(() => { if (isTyping) setTypingStatus("completing checkout..."); }, 10000);
+      setTimeout(() => setTypingStatus("checking real prices..."), 10000);
     } else if (lower.match(/wallet|balance|how much/)) {
       setTypingStatus("checking wallet...");
     } else if (lower.match(/ride|uber|lyft|car|drive me|get me to|take me to|pick me up|drop me off/)) {
