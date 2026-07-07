@@ -247,6 +247,93 @@ const SIDEKICK_TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: "set_reminder",
+    description:
+      "Set a reminder that will be texted to the user at a specific time. Use when the user says 'remind me to X at/on Y'. Requires a specific date AND time — if they didn't give a time, ask or infer a sensible one (e.g. 'tomorrow' → 9:00 AM). For to-dos without a time, use add_task instead.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        text: { type: "string", description: "What to remind them about (e.g. 'Call the dentist')" },
+        date: { type: "string", description: "Date in YYYY-MM-DD" },
+        time: { type: "string", description: "Time in 24h HH:MM (America/New_York)" },
+        recurring: { type: "string", enum: ["daily", "weekly", "weekdays"], description: "Only if the user asked for a repeating reminder" },
+      },
+      required: ["text", "date", "time"],
+    },
+  },
+  {
+    name: "cancel_reminder",
+    description: "Cancel an upcoming reminder. Get the reminderId from the UPCOMING REMINDERS context.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        reminderId: { type: "string", description: "The reminder id from context" },
+      },
+      required: ["reminderId"],
+    },
+  },
+  {
+    name: "update_list",
+    description:
+      "Add or remove items on a named list (grocery, packing, gift ideas, etc.). Use when the user says 'add X to my grocery list', 'take Y off the list', 'start a packing list'. Lists are shown in the LISTS context — answer questions about list contents from there without calling this.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        listName: { type: "string", description: "List name, lowercase (e.g. 'grocery', 'packing', 'gift ideas')" },
+        add: { type: "array", items: { type: "string" }, description: "Items to add" },
+        remove: { type: "array", items: { type: "string" }, description: "Items to remove (fuzzy-matched)" },
+        clear: { type: "boolean", description: "true to empty the list" },
+      },
+      required: ["listName"],
+    },
+  },
+  {
+    name: "track_follow_up",
+    description:
+      "Track an open loop with a person. Use when the user says things like 'waiting on Sarah for the contract', 'I owe Mike an answer', 'remind me to follow up with X about Y'. direction: waiting_on_them = they owe the user; i_owe_them = the user owes them.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        person: { type: "string", description: "Who" },
+        about: { type: "string", description: "What the open loop is" },
+        direction: { type: "string", enum: ["waiting_on_them", "i_owe_them"] },
+      },
+      required: ["person", "about", "direction"],
+    },
+  },
+  {
+    name: "resolve_follow_up",
+    description: "Mark a follow-up as done ('Sarah got back to me', 'I answered Mike'). Get followUpId from the OPEN LOOPS context.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        followUpId: { type: "string", description: "The follow-up id from context" },
+      },
+      required: ["followUpId"],
+    },
+  },
+  {
+    name: "check_inbox",
+    description:
+      "Read the user's unread Gmail. Returns senders, subjects, and message bodies. Use when the user asks about their email, what needs attention, or anything inbox-related.",
+    input_schema: { type: "object" as const, properties: {}, required: [] },
+  },
+  {
+    name: "draft_reply",
+    description:
+      "Create a Gmail DRAFT reply (never sends). Use after check_inbox when the user asks you to reply to or draft a response for an email. Write in the user's voice. The draft lands in their Gmail drafts folder for review.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        to: { type: "string", description: "Recipient email address (from the email's From field)" },
+        subject: { type: "string", description: "Original subject (Re: is added automatically)" },
+        body: { type: "string", description: "The reply body, in the user's voice" },
+        threadId: { type: "string", description: "threadId from check_inbox so the draft attaches to the conversation" },
+      },
+      required: ["to", "subject", "body"],
+    },
+  },
+  {
     name: "check_calendar",
     description:
       "Look up calendar events for any date or date range. Use whenever the user asks about their schedule — 'what do I have Tuesday', 'am I free this weekend', 'next Thursday', 'this week', 'July 4th', etc. Returns all events from Google Calendar and any imported calendars (iCloud, Outlook, etc.).",
@@ -896,6 +983,132 @@ async function handleToolCall(
     }
   }
 
+  if (toolName === "set_reminder") {
+    const { text, date, time, recurring } = toolInput as { text: string; date: string; time: string; recurring?: string };
+    try {
+      // Interpret the requested time as Eastern and store the true UTC instant
+      const desiredET = new Date(`${date}T${time}:00`);
+      const etOffsetMs = desiredET.getTime() - new Date(desiredET.toLocaleString("en-US", { timeZone: "America/New_York" })).getTime();
+      const remindAt = new Date(desiredET.getTime() + etOffsetMs);
+
+      if (remindAt.getTime() < Date.now() - 60000) {
+        return JSON.stringify({ success: false, error: "That time is in the past — ask the user for a future time." });
+      }
+
+      const reminder = await prisma.reminder.create({
+        data: { userId, text: text.trim(), remindAt, recurring: recurring || null },
+      });
+      return JSON.stringify({
+        success: true,
+        reminderId: reminder.id,
+        text: reminder.text,
+        when: remindAt.toLocaleString("en-US", { timeZone: "America/New_York", weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }),
+        recurring: recurring || null,
+        _note: "Delivered by text message at that time.",
+      });
+    } catch (e) {
+      return JSON.stringify({ success: false, error: "Failed to set reminder", detail: String(e) });
+    }
+  }
+
+  if (toolName === "cancel_reminder") {
+    const { reminderId } = toolInput as { reminderId: string };
+    try {
+      await prisma.reminder.delete({ where: { id: reminderId, userId } });
+      return JSON.stringify({ success: true, cancelled: reminderId });
+    } catch (e) {
+      return JSON.stringify({ success: false, error: "Could not find that reminder", detail: String(e) });
+    }
+  }
+
+  if (toolName === "update_list") {
+    const { listName, add, remove, clear } = toolInput as { listName: string; add?: string[]; remove?: string[]; clear?: boolean };
+    try {
+      const name = listName.trim().toLowerCase();
+      const existing = await prisma.list.findUnique({ where: { userId_name: { userId, name } } });
+      let items: string[] = existing ? (existing.items as string[]) : [];
+
+      if (clear) items = [];
+      if (remove?.length) {
+        for (const r of remove) {
+          const rl = r.toLowerCase();
+          items = items.filter((i) => !i.toLowerCase().includes(rl) && !rl.includes(i.toLowerCase()));
+        }
+      }
+      if (add?.length) {
+        for (const a of add) {
+          if (!items.some((i) => i.toLowerCase() === a.toLowerCase())) items.push(a.trim());
+        }
+      }
+
+      await prisma.list.upsert({
+        where: { userId_name: { userId, name } },
+        create: { userId, name, items },
+        update: { items },
+      });
+      return JSON.stringify({ success: true, list: name, items });
+    } catch (e) {
+      return JSON.stringify({ success: false, error: "Failed to update list", detail: String(e) });
+    }
+  }
+
+  if (toolName === "track_follow_up") {
+    const { person, about, direction } = toolInput as { person: string; about: string; direction: string };
+    try {
+      const fu = await prisma.followUp.create({
+        data: { userId, person: person.trim(), about: about.trim(), direction },
+      });
+      return JSON.stringify({ success: true, followUpId: fu.id, person: fu.person, about: fu.about, direction });
+    } catch (e) {
+      return JSON.stringify({ success: false, error: "Failed to track follow-up", detail: String(e) });
+    }
+  }
+
+  if (toolName === "resolve_follow_up") {
+    const { followUpId } = toolInput as { followUpId: string };
+    try {
+      await prisma.followUp.update({ where: { id: followUpId, userId }, data: { resolved: true, resolvedAt: new Date() } });
+      return JSON.stringify({ success: true, resolved: followUpId });
+    } catch (e) {
+      return JSON.stringify({ success: false, error: "Could not find that follow-up", detail: String(e) });
+    }
+  }
+
+  if (toolName === "check_inbox") {
+    try {
+      const { fetchUnreadEmails } = await import("@/lib/google");
+      const emails = await fetchUnreadEmails(userId);
+      if (emails.length === 0) {
+        return JSON.stringify({ emails: [], message: "Inbox zero — no unread emails." });
+      }
+      return JSON.stringify({
+        emails: emails.map((e) => ({
+          from: e.from,
+          subject: e.subject,
+          date: e.date,
+          threadId: e.threadId,
+          body: e.body.slice(0, 1200),
+        })),
+      });
+    } catch (e) {
+      return JSON.stringify({ error: "Could not read inbox — Google may need reconnecting.", detail: String(e) });
+    }
+  }
+
+  if (toolName === "draft_reply") {
+    const { to, subject, body, threadId } = toolInput as { to: string; subject: string; body: string; threadId?: string };
+    try {
+      const { createGmailDraft } = await import("@/lib/google");
+      const draftId = await createGmailDraft(userId, to, subject, body, threadId);
+      if (!draftId) {
+        return JSON.stringify({ success: false, error: "Draft creation failed — Google may need reconnecting." });
+      }
+      return JSON.stringify({ success: true, draftId, _note: "Draft saved to Gmail — it will NOT send until the user sends it themselves." });
+    } catch (e) {
+      return JSON.stringify({ success: false, error: "Failed to create draft", detail: String(e) });
+    }
+  }
+
   if (toolName === "check_calendar") {
     const { startDate, endDate } = toolInput as { startDate: string; endDate: string };
     try {
@@ -1021,7 +1234,7 @@ export async function POST(req: NextRequest) {
   }));
   history.push({ role: "user", content: message.trim() });
 
-  const [tasks, weather, calendarEvents, emails, wallet] = await Promise.all([
+  const [tasks, weather, calendarEvents, emails, wallet, reminders, lists, followUps] = await Promise.all([
     prisma.task.findMany({
       where: { userId },
       orderBy: [{ completed: "asc" }, { createdAt: "desc" }],
@@ -1031,9 +1244,12 @@ export async function POST(req: NextRequest) {
     fetchCalendarRange(userId, undefined, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)).catch(() => []),
     fetchRecentEmails(userId).catch(() => []),
     prisma.wallet.findUnique({ where: { userId } }),
+    prisma.reminder.findMany({ where: { userId, sent: false, remindAt: { gte: new Date() } }, orderBy: { remindAt: "asc" }, take: 10 }).catch(() => []),
+    prisma.list.findMany({ where: { userId }, orderBy: { updatedAt: "desc" }, take: 8 }).catch(() => []),
+    prisma.followUp.findMany({ where: { userId, resolved: false }, orderBy: { createdAt: "desc" }, take: 10 }).catch(() => []),
   ]);
 
-  const systemPrompt = buildSystemPrompt(user, tasks, weather, calendarEvents, emails, wallet);
+  const systemPrompt = buildSystemPrompt(user, tasks, weather, calendarEvents, emails, wallet, reminders, lists, followUps);
 
   let response = await anthropic.messages.create({
     model: "claude-opus-4-8",
@@ -1206,6 +1422,10 @@ interface WalletRecord {
   virtualCardLast4: string | null;
 }
 
+interface ReminderRecord { id: string; text: string; remindAt: Date; recurring: string | null }
+interface ListRecord { name: string; items: unknown }
+interface FollowUpRecord { id: string; person: string; about: string; direction: string; createdAt: Date }
+
 function buildSystemPrompt(
   user: UserProfile,
   tasks: TaskRecord[],
@@ -1213,6 +1433,9 @@ function buildSystemPrompt(
   calendarEvents: CalendarEvent[],
   emails: GmailThread[],
   wallet: WalletRecord | null,
+  reminders: ReminderRecord[] = [],
+  lists: ListRecord[] = [],
+  followUps: FollowUpRecord[] = [],
 ): string {
   const name = user.name || "there";
   const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
@@ -1238,6 +1461,18 @@ function buildSystemPrompt(
     : "\nNo open tasks right now.";
   const doneContext = doneTasks.length > 0
     ? `\nRECENTLY COMPLETED:\n${doneTasks.slice(0, 5).map((t) => `- ${t.title} ✓`).join("\n")}`
+    : "";
+
+  const reminderContext = reminders.length > 0
+    ? `\nUPCOMING REMINDERS (delivered by text):\n${reminders.map((r) => `- ${r.text} — ${new Date(r.remindAt).toLocaleString("en-US", { timeZone: "America/New_York", weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}${r.recurring ? ` (${r.recurring})` : ""} [id: ${r.id}]`).join("\n")}`
+    : "";
+
+  const listContext = lists.length > 0
+    ? `\nLISTS:\n${lists.map((l) => `- ${l.name}: ${(l.items as string[]).join(", ") || "(empty)"}`).join("\n")}`
+    : "";
+
+  const followUpContext = followUps.length > 0
+    ? `\nOPEN LOOPS (follow-ups being tracked):\n${followUps.map((f) => `- ${f.direction === "i_owe_them" ? `${name} owes ${f.person}` : `Waiting on ${f.person}`}: ${f.about} (since ${new Date(f.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" })}) [id: ${f.id}]`).join("\n")}`
     : "";
 
   const contextParts = [];
@@ -1275,7 +1510,7 @@ ${calendarEvents.length > 0 ? `\nUPCOMING SCHEDULE (next 7 days):\n${calendarEve
     return `- ${dayLabel} ${startTime}–${endTime}: ${e.title}${e.location ? ` @ ${e.location}` : ""}`;
   }).join("\n")}` : "\nNo calendar connected yet — or no events this week."}
 ${emails.length > 0 ? `\nRECENT EMAILS:\n${emails.map((e) => `- ${e.unread ? "🔴 " : ""}${e.subject} — from ${e.from}${e.unread ? " (UNREAD)" : ""}`).join("\n")}` : ""}
-${taskContext}${doneContext}
+${taskContext}${doneContext}${reminderContext}${listContext}${followUpContext}
 
 WALLET:
 ${wallet ? `Balance: $${wallet.balance.toFixed(2)}${wallet.cardLast4 ? ` | Funding card: ${wallet.cardBrand} •••• ${wallet.cardLast4}` : ""}${wallet.virtualCardReady ? ` | Virtual debit card: •••• ${wallet.virtualCardLast4} (ready for online purchases)` : " | No virtual card yet — tell them to activate it in the wallet tab"}` : "No wallet set up yet."}
@@ -1364,6 +1599,28 @@ CRITICAL CALENDAR RULES — read these carefully:
 - To REMOVE events: first use check_calendar to find events and get their id AND calendarId, then call remove_calendar_event with BOTH for each one. If ${name} says to remove multiple events, remove ALL of them — don't stop after one or two.
 - Events with readOnly: true live on subscribed calendars (holidays, sports schedules, etc.) and cannot be deleted — tell ${name} they'd need to unsubscribe from that calendar in Google Calendar instead.
 - If a removal fails, tell ${name} honestly — don't pretend it worked.
+
+REMINDERS — timed nudges delivered by TEXT MESSAGE:
+- "Remind me to call the dentist at 3pm" → set_reminder with the exact date/time (convert relative dates; ET timezone). Confirm: "set — I'll text you at 3:00 PM."
+- Reminder = has a TIME and gets texted. Task = a to-do without a delivery time. "Remind me to X" with no time → ask "when should I text you?" or use a sensible default and say so.
+- Recurring: only when asked ("every morning" → daily; "every Monday" → weekly).
+- Cancel via cancel_reminder with the [id] from UPCOMING REMINDERS.
+
+LISTS — grocery, packing, gift ideas, anything:
+- "Add milk to my grocery list" → update_list {listName: "grocery", add: ["milk"]}. "Got the milk" / "take milk off" → remove.
+- Answer "what's on my list?" straight from the LISTS context — no tool call needed.
+- New list names are created automatically on first add.
+
+OPEN LOOPS — you remember who owes what:
+- "Waiting on Sarah for the contract" → track_follow_up (waiting_on_them). "I owe Mike an answer on pricing" → track_follow_up (i_owe_them).
+- When ${name} asks "am I waiting on anything?" or "what do I owe people?" — answer from OPEN LOOPS context.
+- When something resolves ("Sarah sent it") → resolve_follow_up with the [id].
+- If an open loop is getting old (5+ days), it's fair game to mention when relevant — gently.
+
+EMAIL — you are ${name}'s inbox chief of staff (Gmail connected):
+- "Check my email" / "anything important?" → check_inbox, then triage: lead with what actually needs ${name}, one line each, skip noise.
+- "Reply to X" / "draft a response" → draft_reply. Write in ${name}'s voice (casual-warm, "Howdy" greeting style where it fits, sign off "-C"). The draft saves to Gmail for review — NEVER claim it was sent; say "draft's in your Gmail, read it over and hit send."
+- NEVER auto-send email. Drafts only, always.
 
 TASKS — you manage ${name}'s to-do list:
 - To ADD: use add_task when ${name} says "add X to my tasks", "remind me to X", "I need to do Y", or addresses you by name with a task ("Hey ${user.sidekickName || "Sidekick"}, add..."). Extract the due date (convert relative dates using today's date) and infer priority from urgency. Confirm briefly: "added — **X**, due Friday, high priority."

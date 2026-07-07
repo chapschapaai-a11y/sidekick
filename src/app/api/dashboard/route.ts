@@ -16,6 +16,20 @@ export async function GET() {
       },
       wallet: { select: { balance: true } },
       integrations: { select: { provider: true, accountEmail: true } },
+      reminders: {
+        where: { sent: false, remindAt: { gte: new Date() } },
+        orderBy: { remindAt: "asc" },
+        take: 5,
+      },
+      lists: {
+        orderBy: { updatedAt: "desc" },
+        take: 4,
+      },
+      followUps: {
+        where: { resolved: false },
+        orderBy: { createdAt: "desc" },
+        take: 5,
+      },
     },
   });
 
@@ -44,6 +58,9 @@ export async function GET() {
       dueDate: t.dueDate,
     })),
     walletBalance: user.wallet?.balance ?? null,
+    reminders: user.reminders.map((r) => ({ id: r.id, text: r.text, remindAt: r.remindAt, recurring: r.recurring })),
+    lists: user.lists.map((l) => ({ id: l.id, name: l.name, items: l.items })),
+    followUps: user.followUps.map((f) => ({ id: f.id, person: f.person, about: f.about, direction: f.direction })),
     calendarConnected: user.integrations.some((i) => i.provider === "google"),
     emailConnected: user.integrations.some((i) => i.provider === "google"),
     googleEmail: user.integrations.find((i) => i.provider === "google")?.accountEmail || null,

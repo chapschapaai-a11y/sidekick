@@ -54,7 +54,7 @@ export default function AuthScreen({ onAuth }: Props) {
             <path d="M28 94c-14 0-22-10-22-22s8-20 22-22c16-2 26-4 30-16 2-6 0-14-6-18-6-5-14-6-20-4 8-8 22-10 32-2s12 18 6 30c-6 14-22 18-36 22-8 2-14 8-14 16s6 14 16 12c-4 2-6 4-8 4z" fill="#b8e600"/>
           </svg>
         </div>
-        <h1 className="text-[36px] font-extrabold tracking-[-1.5px] text-text-primary mb-1">Sidekick</h1>
+        <h1 className="font-display text-[40px] text-text-primary mb-1">Sidekick</h1>
         <p className="text-text-secondary text-sm mb-8">
           {mode === "signup" ? "Create your account" : "Welcome back"}
         </p>
@@ -94,7 +94,7 @@ export default function AuthScreen({ onAuth }: Props) {
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-lime text-accent font-bold py-4 rounded-full text-[17px] tracking-tight hover:brightness-105 active:scale-[0.97] transition-all disabled:opacity-50 shadow-[0_4px_16px_rgba(184,230,0,0.3)]"
+            className="w-full bg-accent text-white font-semibold py-4 rounded-full text-[17px] tracking-tight hover:brightness-110 active:scale-[0.97] transition-all disabled:opacity-50 shadow-[0_4px_16px_rgba(26,26,26,0.18)]"
           >
             {loading ? "..." : mode === "signup" ? "Create Account" : "Log In"}
           </button>

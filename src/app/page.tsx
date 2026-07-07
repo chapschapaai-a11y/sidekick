@@ -206,12 +206,13 @@ function TabButton({
   return (
     <button
       onClick={onClick}
-      className={`flex-1 flex flex-col items-center gap-0.5 py-3 transition-colors ${
+      className={`flex-1 flex flex-col items-center gap-1 py-2.5 transition-all ${
         active ? "text-text-primary" : "text-text-muted hover:text-text-secondary"
       }`}
     >
-      <span className="text-lg">{icon}</span>
-      <span className={`text-[10px] font-semibold ${active ? "text-text-primary" : ""}`}>{label}</span>
+      <span className={`text-lg transition-transform ${active ? "scale-110" : "grayscale opacity-60"}`}>{icon}</span>
+      <span className={`text-[10px] font-semibold tracking-wide ${active ? "text-text-primary" : ""}`}>{label}</span>
+      <span className={`h-1 w-1 rounded-full transition-all ${active ? "bg-lime" : "bg-transparent"}`} />
     </button>
   );
 }

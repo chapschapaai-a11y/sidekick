@@ -46,6 +46,26 @@ interface DraftItem {
   createdAt: string;
 }
 
+interface ReminderItem {
+  id: string;
+  text: string;
+  remindAt: string;
+  recurring: string | null;
+}
+
+interface ListItem {
+  id: string;
+  name: string;
+  items: string[];
+}
+
+interface FollowUpItem {
+  id: string;
+  person: string;
+  about: string;
+  direction: string;
+}
+
 interface DashboardData {
   greeting: string;
   name: string;
@@ -55,6 +75,9 @@ interface DashboardData {
   walletBalance: number | null;
   calendarConnected: boolean;
   emailConnected: boolean;
+  reminders?: ReminderItem[];
+  lists?: ListItem[];
+  followUps?: FollowUpItem[];
 }
 
 export default function Dashboard({ state, onNavigate, onLogout }: Props) {
@@ -208,7 +231,7 @@ export default function Dashboard({ state, onNavigate, onLogout }: Props) {
         <div className="flex justify-between items-center pt-6 pb-5 animate-fade-up gap-3">
           <div className="min-w-0 flex-1">
             <div className="text-[15px] text-text-secondary">{greeting}</div>
-            <div className="text-[28px] font-extrabold tracking-tight text-text-primary truncate">
+            <div className="font-display text-[32px] text-text-primary truncate">
               {name}
             </div>
           </div>
@@ -458,6 +481,65 @@ export default function Dashboard({ state, onNavigate, onLogout }: Props) {
               </span>
             </div>
           </button>
+        )}
+
+        {/* Upcoming reminders — texted when due */}
+        {(data?.reminders?.length ?? 0) > 0 && (
+          <Section title="⏰ Reminders" delay="0.22s">
+            <div className="bg-white rounded-2xl shadow-[0_1px_3px_rgba(0,0,0,0.04)] overflow-hidden">
+              {data!.reminders!.map((r, i) => (
+                <div key={r.id} className={`flex items-center gap-3 px-4 py-3 ${i > 0 ? "border-t border-[#f0ede8]" : ""}`}>
+                  <div className="w-1 h-8 rounded-full bg-lime shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-text-primary truncate">{r.text}</p>
+                    <p className="text-xs text-text-muted">
+                      {new Date(r.remindAt).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                      {r.recurring ? ` · repeats ${r.recurring}` : ""} · by text
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Section>
+        )}
+
+        {/* Lists — grocery, packing, etc. */}
+        {(data?.lists?.length ?? 0) > 0 && (
+          <Section title="📝 Lists" delay="0.23s">
+            <div className="grid grid-cols-2 gap-3">
+              {data!.lists!.map((l) => (
+                <div key={l.id} className="bg-white rounded-2xl shadow-[0_1px_3px_rgba(0,0,0,0.04)] p-4">
+                  <p className="text-[13px] font-semibold text-text-primary capitalize mb-1.5">{l.name}</p>
+                  {(l.items as string[]).slice(0, 4).map((item, i) => (
+                    <p key={i} className="text-xs text-text-secondary truncate leading-relaxed">· {item}</p>
+                  ))}
+                  {(l.items as string[]).length > 4 && (
+                    <p className="text-[11px] text-text-muted mt-1">+{(l.items as string[]).length - 4} more</p>
+                  )}
+                  {(l.items as string[]).length === 0 && <p className="text-xs text-text-muted italic">empty</p>}
+                </div>
+              ))}
+            </div>
+          </Section>
+        )}
+
+        {/* Open loops — follow-up memory */}
+        {(data?.followUps?.length ?? 0) > 0 && (
+          <Section title="🔄 Open Loops" delay="0.24s">
+            <div className="bg-white rounded-2xl shadow-[0_1px_3px_rgba(0,0,0,0.04)] overflow-hidden">
+              {data!.followUps!.map((f, i) => (
+                <div key={f.id} className={`flex items-center gap-3 px-4 py-3 ${i > 0 ? "border-t border-[#f0ede8]" : ""}`}>
+                  <span className="text-base shrink-0">{f.direction === "i_owe_them" ? "📤" : "📥"}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-text-primary truncate">
+                      {f.direction === "i_owe_them" ? `You owe ${f.person}` : `Waiting on ${f.person}`}
+                    </p>
+                    <p className="text-xs text-text-muted truncate">{f.about}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Section>
         )}
 
         {/* Action Items — persistent, from database */}

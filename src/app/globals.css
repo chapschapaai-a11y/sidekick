@@ -11,8 +11,9 @@
   --text-secondary: #6B6B6B;
   --text-muted: #9A9A9F;
   --border: #EBEBEA;
-  --lime: #b8e600;
-  --lime-muted: #F0FADC;
+  /* warm gold — Sidekick brand accent (token keeps legacy "lime" name) */
+  --lime: #B08540;
+  --lime-muted: #F6EFE0;
   --success: #34c759;
   --danger: #ff3b30;
   --info: #007aff;
@@ -101,3 +102,15 @@ input[type="range"]::-webkit-slider-thumb {
 
 .typing-dot:nth-child(2) { animation-delay: 0.2s; }
 .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+.font-display {
+  font-family: var(--font-display), Georgia, serif;
+  letter-spacing: -0.01em;
+}
+
+.card-elevated {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  box-shadow: 0 1px 2px rgba(26, 26, 26, 0.04), 0 8px 24px -12px rgba(26, 26, 26, 0.08);
+}

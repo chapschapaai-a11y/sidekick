@@ -302,7 +302,7 @@ export default function Chat({ state }: Props) {
           className="w-9 h-9 rounded-full object-cover"
         />
         <div className="flex-1">
-          <h3 className="text-text-primary font-semibold text-base tracking-tight">{state.sidekickName || "Sidekick"}</h3>
+          <h3 className="font-display text-text-primary text-[19px]">{state.sidekickName || "Sidekick"}</h3>
           <p className="text-xs text-success font-medium">Online</p>
         </div>
         <div className="flex gap-1">
