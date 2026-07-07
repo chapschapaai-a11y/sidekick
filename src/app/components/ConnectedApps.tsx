@@ -71,6 +71,8 @@ export default function ConnectedApps() {
   const [loginUrl, setLoginUrl] = useState<string | null>(null);
   const [navFailed, setNavFailed] = useState(false);
   const [iframeKey, setIframeKey] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [verifyMessage, setVerifyMessage] = useState<string | null>(null);
 
   // The live-view websocket dies when the phone suspends the tab (e.g. switching
   // to Messages for a 2FA code). The remote browser session is still alive —
@@ -153,12 +155,21 @@ export default function ConnectedApps() {
 
   async function handleDoneConnecting() {
     if (!connectingApp) return;
+    setSaving(true);
+    setVerifyMessage(null);
     try {
-      await fetch("/api/connections/complete", {
+      const res = await fetch("/api/connections/complete", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ provider: connectingApp }),
       });
+      const data = await res.json();
+      if (data.verified === false) {
+        // Login not detected — keep the window open so they can finish
+        setVerifyMessage(data.message || "Login not detected yet — finish logging in above, then tap save again.");
+        setSaving(false);
+        return;
+      }
       setConnections((prev) => ({
         ...prev,
         [connectingApp]: { provider: connectingApp, status: "connected", connectedAt: new Date().toISOString() },
@@ -166,6 +177,7 @@ export default function ConnectedApps() {
     } catch {
       // ignore
     }
+    setSaving(false);
     setConnectingApp(null);
     setSessionUrl(null);
   }
@@ -234,14 +246,20 @@ export default function ConnectedApps() {
         </div>
 
         <div className="px-5 py-4 border-t border-[#f0f0f0]">
+          {verifyMessage && (
+            <div className="mb-3 px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl">
+              <p className="text-xs text-amber-800">{verifyMessage}</p>
+            </div>
+          )}
           <button
             onClick={handleDoneConnecting}
-            className="w-full bg-[#1a1a1a] text-white font-semibold py-3.5 rounded-2xl text-base"
+            disabled={saving}
+            className="w-full bg-[#1a1a1a] text-white font-semibold py-3.5 rounded-2xl text-base disabled:opacity-60"
           >
-            I&apos;m logged in — save connection
+            {saving ? "Checking your login..." : "I'm logged in — save connection"}
           </button>
           <p className="text-xs text-text-muted text-center mt-2">
-            Log in above, then tap this button to save your session
+            Log in above, then tap this button — we verify the login before saving
           </p>
         </div>
       </div>
