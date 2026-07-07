@@ -27,7 +27,7 @@ async function navigateSession(connectUrl: string, url: string): Promise<{ succe
 }
 
 const LOGIN_URLS: Record<string, string> = {
-  ubereats: "https://auth.uber.com/v2/",
+  ubereats: "https://www.ubereats.com/login-redirect/",
   doordash: "https://identity.doordash.com/auth/user/login",
   lyft: "https://www.lyft.com/login",
   amazon: "https://www.amazon.com/ap/signin",

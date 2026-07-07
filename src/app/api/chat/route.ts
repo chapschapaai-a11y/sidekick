@@ -490,7 +490,7 @@ async function handleToolCall(
         `You are in the user's logged-in ${serviceName} account. Place this delivery order COMPLETELY:\n` +
         `RESTAURANT: ${restaurant}\n` +
         `ORDER: ${items}\n` +
-        `Steps: 1) If you see a login or sign-in page, STOP and return failed with reason "not-logged-in". ` +
+        `Steps: 1) If the page shows a "Log in" button, click it ONCE and wait — the account often signs in automatically via saved cookies. Only if you are then asked for credentials (phone/email/password/verification code), STOP and return failed with reason "not-logged-in". ` +
         `2) FIRST confirm a delivery address is set (shown in the header)${user?.homeAddress ? ` — it should be ${user.homeAddress}; select it if prompted` : ""}. Menu items will not open without an address. ` +
         `3) Search for the restaurant and open its store page — verify the store location is near the delivery address, not another city. ` +
         `4) Click a menu item to open its customization modal. If a click times out, press the Escape key to dismiss any overlay, scroll the item fully into view, and try again. ` +
