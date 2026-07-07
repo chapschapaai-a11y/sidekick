@@ -18,8 +18,9 @@ async function navigateSession(connectUrl: string, url: string): Promise<{ succe
       }
       return { success: true };
     } finally {
-      // Disconnect the client only — keepAlive keeps the session (and page) running for the live view
-      await browser.close().catch(() => {});
+      // Do NOT call browser.close() — over CDP it terminates the remote browser,
+      // killing the live-view session the user is about to log into. The client
+      // socket drops harmlessly when this serverless function ends.
     }
   } catch (e) {
     return { success: false, error: String(e).slice(0, 200) };
