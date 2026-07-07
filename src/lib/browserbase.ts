@@ -887,10 +887,22 @@ RULES:
           await page.goto(browserAction.url, { waitUntil: "domcontentloaded", timeout: 25000 });
           await page.waitForTimeout(2000);
         } else if (browserAction.action === "click") {
-          if (idxSelector) {
-            await page.locator(idxSelector).first().click({ timeout: 5000 });
-          } else if (browserAction.selector) {
-            await page.locator(browserAction.selector).first().click({ timeout: 5000 });
+          const sel = idxSelector || browserAction.selector;
+          if (sel) {
+            const loc = page.locator(sel).first();
+            try {
+              await loc.click({ timeout: 5000 });
+            } catch {
+              // Overlays (promos, cookie layers) swallow normal clicks — escalate:
+              // forced click ignores hit-target checks, JS click bypasses rendering entirely.
+              try {
+                await loc.click({ timeout: 3000, force: true });
+                console.error("[BROWSE:CLICK] normal click blocked — force click worked");
+              } catch {
+                await loc.evaluate((el) => (el as HTMLElement).click());
+                console.error("[BROWSE:CLICK] force click blocked — JS click dispatched");
+              }
+            }
           }
           await page.waitForTimeout(1500);
         } else if (browserAction.action === "type" && browserAction.text) {
