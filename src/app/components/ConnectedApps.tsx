@@ -70,6 +70,20 @@ export default function ConnectedApps() {
   const [sessionUrl, setSessionUrl] = useState<string | null>(null);
   const [loginUrl, setLoginUrl] = useState<string | null>(null);
   const [navFailed, setNavFailed] = useState(false);
+  const [iframeKey, setIframeKey] = useState(0);
+
+  // The live-view websocket dies when the phone suspends the tab (e.g. switching
+  // to Messages for a 2FA code). The remote browser session is still alive —
+  // reload the iframe on return so it reconnects instead of showing "disconnected".
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        setIframeKey((k) => k + 1);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, []);
   const [showCalendarWizard, setShowCalendarWizard] = useState(false);
   const [calendarSubs, setCalendarSubs] = useState<CalendarSub[]>([]);
 
@@ -187,6 +201,13 @@ export default function ConnectedApps() {
           <h3 className="text-text-primary font-semibold text-base flex-1">
             Log in to {app?.name}
           </h3>
+          <button
+            onClick={() => setIframeKey((k) => k + 1)}
+            className="text-text-muted text-sm px-2 py-1 rounded-lg border border-[#e5e5e5]"
+            title="Reconnect the login window"
+          >
+            ↻ Reconnect
+          </button>
         </div>
 
         {navFailed && loginUrl && (
@@ -197,8 +218,15 @@ export default function ConnectedApps() {
           </div>
         )}
 
+        <div className="px-5 py-2 bg-blue-50 border-b border-blue-100">
+          <p className="text-xs text-blue-800 text-center">
+            If you leave to grab a text code, the window may show &quot;disconnected&quot; when you return — your login is still there, just tap ↻ Reconnect.
+          </p>
+        </div>
+
         <div className="flex-1 flex flex-col">
           <iframe
+            key={iframeKey}
             src={sessionUrl}
             className="flex-1 w-full border-0"
             allow="clipboard-write"
