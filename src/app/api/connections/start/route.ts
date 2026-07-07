@@ -76,6 +76,8 @@ export async function POST(req: NextRequest) {
       keepAlive: true,
       browserSettings: {
         context: { id: contextId, persist: true },
+        // Phone-sized viewport so the live login view is readable on mobile
+        viewport: { width: 430, height: 932 },
       },
     });
 
