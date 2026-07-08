@@ -187,10 +187,14 @@ const SIDEKICK_TOOLS: Anthropic.Tool[] = [
   {
     name: "save_profile",
     description:
-      "Save the user's contact info (phone number, email) for auto-filling checkout forms. Use when the user shares their phone number or email.",
+      "Save the user's contact info (phone, email) or personal goals. Use when the user shares their phone/email, or states a goal ('I want to lose 10 pounds', 'I'm training for a marathon', 'saving for a house') — goals shape future advice.",
     input_schema: {
       type: "object" as const,
       properties: {
+        addGoal: {
+          type: "string",
+          description: "A personal goal to remember (verbatim-ish, concise)",
+        },
         phone: {
           type: "string",
           description: "Phone number (e.g. '956-907-5482')",
@@ -244,6 +248,47 @@ const SIDEKICK_TOOLS: Anthropic.Tool[] = [
         },
       },
       required: ["taskId"],
+    },
+  },
+  {
+    name: "send_text",
+    description:
+      "Send an SMS text message to someone on the user's behalf from Sidekick's number. ONLY call after the user has seen and confirmed the EXACT message text. Look up saved people in CONTACTS context; for new people ask for their number, then save_contact.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        phone: { type: "string", description: "Recipient phone number in E.164 or 10-digit US format" },
+        recipientName: { type: "string", description: "Who this is going to (for the record)" },
+        message: { type: "string", description: "The exact message text the user approved" },
+      },
+      required: ["phone", "recipientName", "message"],
+    },
+  },
+  {
+    name: "save_contact",
+    description:
+      "Save a person to the user's contacts (name + phone and/or email, optional relationship like 'mom', 'business partner'). Use when the user shares someone's contact info or asks you to remember a person.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        name: { type: "string" },
+        phone: { type: "string" },
+        email: { type: "string" },
+        relationship: { type: "string" },
+      },
+      required: ["name"],
+    },
+  },
+  {
+    name: "save_goal",
+    description:
+      "Save a personal goal the user states — fitness, money, career, habits ('run a half marathon in October', 'cut sugar', 'save $10k'). ALWAYS call this when the user expresses a goal, even casually mid-conversation. Goals persist and shape all future advice.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        goal: { type: "string", description: "The goal, concise (e.g. 'Run a half marathon in October')" },
+      },
+      required: ["goal"],
     },
   },
   {
@@ -856,15 +901,16 @@ async function handleToolCall(
   }
 
   if (toolName === "save_profile") {
-    const { phone, email } = toolInput as { phone?: string; email?: string };
-    const updateData: Record<string, string> = {};
+    const { phone, email, addGoal } = toolInput as { phone?: string; email?: string; addGoal?: string };
+    const updateData: Record<string, unknown> = {};
     if (phone) updateData.phone = phone;
     if (email) updateData.email = email;
+    if (addGoal) updateData.goals = { push: addGoal.trim() };
     if (Object.keys(updateData).length === 0) {
       return JSON.stringify({ error: "No info provided to save" });
     }
     await prisma.user.update({ where: { id: userId }, data: updateData });
-    return JSON.stringify({ success: true, saved: updateData });
+    return JSON.stringify({ success: true, saved: Object.keys(updateData) });
   }
 
   if (toolName === "make_reservation") {
@@ -980,6 +1026,52 @@ async function handleToolCall(
       return JSON.stringify({ success: true, completed: title || taskId });
     } catch (e) {
       return JSON.stringify({ success: false, error: "Could not find that task", detail: String(e) });
+    }
+  }
+
+  if (toolName === "send_text") {
+    const { phone, recipientName, message } = toolInput as { phone: string; recipientName: string; message: string };
+    try {
+      const digits = phone.replace(/[^\d+]/g, "");
+      const e164 = digits.startsWith("+") ? digits : `+1${digits}`;
+      if (!/^\+1\d{10}$/.test(e164) && !/^\+\d{8,15}$/.test(e164)) {
+        return JSON.stringify({ success: false, error: "That phone number doesn't look valid — double-check it with the user." });
+      }
+      const { sendSMS } = await import("@/lib/twilio");
+      const sid = await sendSMS(e164, message);
+      return JSON.stringify({ success: true, to: recipientName, sid, _note: "Sent from Sidekick's number — tell the user it went out and that replies won't come back to them (yet)." });
+    } catch (e) {
+      const msg = String(e);
+      const unverified = msg.includes("unverified") || msg.includes("21608");
+      return JSON.stringify({
+        success: false,
+        error: unverified
+          ? "Twilio is still in trial mode — it can only text verified numbers until the toll-free verification clears. Tell the user honestly and offer to draft the message so they can copy-paste it."
+          : `Text failed to send: ${msg.slice(0, 150)}`,
+      });
+    }
+  }
+
+  if (toolName === "save_contact") {
+    const { name, phone, email, relationship } = toolInput as { name: string; phone?: string; email?: string; relationship?: string };
+    try {
+      const existing = await prisma.contact.findFirst({ where: { userId, name: { equals: name.trim(), mode: "insensitive" } } });
+      const contact = existing
+        ? await prisma.contact.update({ where: { id: existing.id }, data: { phone: phone ?? existing.phone, email: email ?? existing.email, relationship: relationship ?? existing.relationship } })
+        : await prisma.contact.create({ data: { userId, name: name.trim(), phone: phone || null, email: email || null, relationship: relationship || null } });
+      return JSON.stringify({ success: true, contact: { name: contact.name, phone: contact.phone, email: contact.email, relationship: contact.relationship } });
+    } catch (e) {
+      return JSON.stringify({ success: false, error: "Failed to save contact", detail: String(e) });
+    }
+  }
+
+  if (toolName === "save_goal") {
+    const { goal } = toolInput as { goal: string };
+    try {
+      await prisma.user.update({ where: { id: userId }, data: { goals: { push: goal.trim() } } });
+      return JSON.stringify({ success: true, saved: goal.trim() });
+    } catch (e) {
+      return JSON.stringify({ success: false, error: "Failed to save goal", detail: String(e) });
     }
   }
 
@@ -1234,7 +1326,7 @@ export async function POST(req: NextRequest) {
   }));
   history.push({ role: "user", content: message.trim() });
 
-  const [tasks, weather, calendarEvents, emails, wallet, reminders, lists, followUps] = await Promise.all([
+  const [tasks, weather, calendarEvents, emails, wallet, reminders, lists, followUps, contacts] = await Promise.all([
     prisma.task.findMany({
       where: { userId },
       orderBy: [{ completed: "asc" }, { createdAt: "desc" }],
@@ -1247,9 +1339,10 @@ export async function POST(req: NextRequest) {
     prisma.reminder.findMany({ where: { userId, sent: false, remindAt: { gte: new Date() } }, orderBy: { remindAt: "asc" }, take: 10 }).catch(() => []),
     prisma.list.findMany({ where: { userId }, orderBy: { updatedAt: "desc" }, take: 8 }).catch(() => []),
     prisma.followUp.findMany({ where: { userId, resolved: false }, orderBy: { createdAt: "desc" }, take: 10 }).catch(() => []),
+    prisma.contact.findMany({ where: { userId }, orderBy: { createdAt: "desc" }, take: 25 }).catch(() => []),
   ]);
 
-  const systemPrompt = buildSystemPrompt(user, tasks, weather, calendarEvents, emails, wallet, reminders, lists, followUps);
+  const systemPrompt = buildSystemPrompt(user, tasks, weather, calendarEvents, emails, wallet, reminders, lists, followUps, contacts);
 
   let response = await anthropic.messages.create({
     model: "claude-opus-4-8",
@@ -1402,6 +1495,7 @@ interface UserProfile {
   needs: string[];
   wakeTime: string | null;
   diet: string[];
+  goals: string[];
   commute: string[];
   age: number | null;
 }
@@ -1436,6 +1530,7 @@ function buildSystemPrompt(
   reminders: ReminderRecord[] = [],
   lists: ListRecord[] = [],
   followUps: FollowUpRecord[] = [],
+  contacts: { name: string; phone: string | null; email: string | null; relationship: string | null }[] = [],
 ): string {
   const name = user.name || "there";
   const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
@@ -1471,6 +1566,10 @@ function buildSystemPrompt(
     ? `\nLISTS:\n${lists.map((l) => `- ${l.name}: ${(l.items as string[]).join(", ") || "(empty)"}`).join("\n")}`
     : "";
 
+  const contactContext = contacts.length > 0
+    ? `\nCONTACTS (people ${name} has saved):\n${contacts.map((c) => `- ${c.name}${c.relationship ? ` (${c.relationship})` : ""}${c.phone ? ` — ${c.phone}` : ""}${c.email ? ` — ${c.email}` : ""}`).join("\n")}`
+    : "";
+
   const followUpContext = followUps.length > 0
     ? `\nOPEN LOOPS (follow-ups being tracked):\n${followUps.map((f) => `- ${f.direction === "i_owe_them" ? `${name} owes ${f.person}` : `Waiting on ${f.person}`}: ${f.about} (since ${new Date(f.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" })}) [id: ${f.id}]`).join("\n")}`
     : "";
@@ -1483,6 +1582,7 @@ function buildSystemPrompt(
   if (user.age) contextParts.push(`Age: ${user.age}`);
   if (user.backgrounds.length > 0) contextParts.push(`Background: ${user.backgrounds.join(", ")}`);
   if (user.diet.length > 0) contextParts.push(`Diet: ${user.diet.join(", ")}`);
+  if (user.goals.length > 0) contextParts.push(`Goals: ${user.goals.join("; ")}`);
   if (user.commute.length > 0) contextParts.push(`Gets around by: ${user.commute.join(", ")}`);
   if (user.needs.length > 0) contextParts.push(`Priorities: ${user.needs.join(", ")}`);
   if (user.wakeTime) contextParts.push(`Wake time: ${user.wakeTime}`);
@@ -1510,7 +1610,7 @@ ${calendarEvents.length > 0 ? `\nUPCOMING SCHEDULE (next 7 days):\n${calendarEve
     return `- ${dayLabel} ${startTime}–${endTime}: ${e.title}${e.location ? ` @ ${e.location}` : ""}`;
   }).join("\n")}` : "\nNo calendar connected yet — or no events this week."}
 ${emails.length > 0 ? `\nRECENT EMAILS:\n${emails.map((e) => `- ${e.unread ? "🔴 " : ""}${e.subject} — from ${e.from}${e.unread ? " (UNREAD)" : ""}`).join("\n")}` : ""}
-${taskContext}${doneContext}${reminderContext}${listContext}${followUpContext}
+${taskContext}${doneContext}${reminderContext}${listContext}${followUpContext}${contactContext}
 
 WALLET:
 ${wallet ? `Balance: $${wallet.balance.toFixed(2)}${wallet.cardLast4 ? ` | Funding card: ${wallet.cardBrand} •••• ${wallet.cardLast4}` : ""}${wallet.virtualCardReady ? ` | Virtual debit card: •••• ${wallet.virtualCardLast4} (ready for online purchases)` : " | No virtual card yet — tell them to activate it in the wallet tab"}` : "No wallet set up yet."}
@@ -1599,6 +1699,17 @@ CRITICAL CALENDAR RULES — read these carefully:
 - To REMOVE events: first use check_calendar to find events and get their id AND calendarId, then call remove_calendar_event with BOTH for each one. If ${name} says to remove multiple events, remove ALL of them — don't stop after one or two.
 - Events with readOnly: true live on subscribed calendars (holidays, sports schedules, etc.) and cannot be deleted — tell ${name} they'd need to unsubscribe from that calendar in Google Calendar instead.
 - If a removal fails, tell ${name} honestly — don't pretend it worked.
+
+TEXTING PEOPLE — you can send texts on ${name}'s behalf:
+- "Text Jennifer that I'm running 10 late" → compose the message, SHOW it to ${name} for approval ("here's what I'll send: '...' — good?"), then send_text ONLY after they approve. NEVER send without showing the exact text first.
+- Look up people in CONTACTS. Unknown person → ask for their number, save_contact, then proceed.
+- Texts come from Sidekick's number, not ${name}'s — mention that the first time you text someone new for them.
+- PLANS → CALENDAR: whenever plans with a time get made or confirmed in conversation ("dinner Friday at 7 with Mike"), offer to add it: "want that on your calendar?" — then add_calendar_event on yes. If ${name} states the plan as fact, just add it and confirm.
+
+DIET & GOALS — you actively help ${name} get there:
+- Their diet and goals are in the profile above. Weave them in naturally: food suggestions respect the diet, purchases and plans get a gentle goal-aware nudge when relevant ("skipping the fries tracks with your cut — grilled option?").
+- The moment ${name} states a goal — even casually — call save_goal. Then acknowledge it naturally. Don't skip the save.
+- Never lecture. One light nudge max, then drop it.
 
 REMINDERS — timed nudges delivered by TEXT MESSAGE:
 - "Remind me to call the dentist at 3pm" → set_reminder with the exact date/time (convert relative dates; ET timezone). Confirm: "set — I'll text you at 3:00 PM."

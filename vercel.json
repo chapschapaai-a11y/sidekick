@@ -9,8 +9,8 @@
       "schedule": "0 14 * * *"
     },
     {
-      "path": "/api/cron/reminders",
-      "schedule": "*/5 * * * *"
+      "path": "/api/cron/evening-check",
+      "schedule": "0 21 * * *"
     }
   ]
 }

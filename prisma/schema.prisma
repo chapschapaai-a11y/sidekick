@@ -25,6 +25,7 @@ model User {
   wakeTime      String?
   commute       String[]
   diet          String[]
+  goals         String[]
   sidekickName  String    @default("Sidekick")
   stripeCustomerId String? @unique
   onboarded     Boolean   @default(false)

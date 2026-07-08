@@ -1,0 +1,16 @@
+name: Send due reminders
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger reminder delivery
+        run: |
+          curl -s --fail-with-body \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://sidekick-eta-five.vercel.app/api/cron/reminders"
